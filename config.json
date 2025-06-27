@@ -1,0 +1,18 @@
+{
+  "model": {
+    "name": "gpt-4o",
+    "temperature": 0.1
+  },
+  "agent": {
+    "max_iterations": 5,
+    "solution_filename": "solution.py",
+    "test_filename": "test_solution.py",
+    "test_timeout": 30
+  },
+  "prompts": {
+    "include_docstrings": true,
+    "include_error_handling": true,
+    "use_class_structure": true,
+    "test_framework": "pytest"
+  }
+}
