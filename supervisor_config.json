@@ -14,5 +14,12 @@
     "include_error_handling": true,
     "use_class_structure": true,
     "test_framework": "pytest"
+  },
+  "claude_code": {
+    "use_bedrock": true,
+    "working_directory": null,
+    "javascript_runtime": "node",
+    "executable_args": [],
+    "claude_code_path": null
   }
 }

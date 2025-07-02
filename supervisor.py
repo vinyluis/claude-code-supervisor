@@ -8,16 +8,20 @@ import os
 import sys
 import json
 import subprocess
+import asyncio
 from typing import Optional, List, Any, Dict
 from dataclasses import dataclass
+from pathlib import Path
 
 try:
   from langgraph.graph import StateGraph, START, END
   from langchain_core.messages import HumanMessage, AIMessage
   from langchain_openai import ChatOpenAI
+  from claude_code_sdk import query
+  from dotenv import load_dotenv
 except ImportError as e:
   print(f"Missing required dependencies: {e}")
-  print("Install with: pip install langgraph langchain langchain-openai")
+  print("Install with: pip install langgraph langchain langchain-openai claude-code-sdk python-dotenv")
   sys.exit(1)
 
 
@@ -47,9 +51,21 @@ class SupervisorAgent:
   """Supervisor agent that orchestrates code generation and testing"""
 
   def __init__(self, config_path: str = "supervisor_config.json"):
+    self._load_environment()
     self.config = self._load_config(config_path)
     self.llm = self._initialize_llm()
+    self.claude_code_config = self._initialize_claude_code()
     self.graph = self._build_graph()
+
+  def _load_environment(self):
+    """
+    Load environment variables from .env file
+    """
+    env_path = Path('.env')
+    if env_path.exists():
+      load_dotenv(env_path)
+    else:
+      print("Warning: .env file not found. Environment variables may need to be set manually.")
 
   def _load_config(self, config_path: str) -> Dict:
     """
@@ -72,6 +88,14 @@ class SupervisorAgent:
           "test_filename": "test_solution.py",
           "test_timeout": 30
         },
+        "claude_code": {
+          "provider": "anthropic",
+          "use_bedrock": False,
+          "working_directory": None,
+          "javascript_runtime": "node",
+          "executable_args": [],
+          "claude_code_path": None
+        }
       }
     except json.JSONDecodeError as e:
       print(f"Error parsing config file: {e}")
@@ -83,6 +107,33 @@ class SupervisorAgent:
       model=self.config["model"]["name"],
       temperature=self.config["model"]["temperature"]
     )
+
+  def _initialize_claude_code(self) -> Dict:
+    """
+    Initialize Claude Code SDK configuration
+    """
+    claude_config = self.config.get("claude_code", {})
+
+    # Set environment variables based on provider choice
+    if claude_config.get("use_bedrock", False):
+      os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"
+      print("🔧 Configured Claude Code to use Amazon Bedrock")
+    else:
+      # Default to Anthropic API
+      if not os.getenv("ANTHROPIC_API_KEY"):
+        print("Warning: ANTHROPIC_API_KEY not found in environment. Claude Code SDK may not work properly.")
+        print("Please set your API key in the .env file or environment variables.")
+      else:
+        print("🔧 Configured Claude Code to use Anthropic API")
+
+    # Return configuration for potential future use
+    return {
+      "use_bedrock": claude_config.get("use_bedrock", False),
+      "working_directory": claude_config.get("working_directory"),
+      "javascript_runtime": claude_config.get("javascript_runtime", "node"),
+      "executable_args": claude_config.get("executable_args", []),
+      "claude_code_path": claude_config.get("claude_code_path")
+    }
 
   def _build_graph(self):
     """Build the LangGraph workflow"""
@@ -133,7 +184,7 @@ class SupervisorAgent:
     Keep the plan concise and focused.
     """
 
-    response = self._call_claude_code_sdk("plan", planning_prompt)
+    response = self._call_llm("plan", planning_prompt)
     print("📋 Plan generated:")
     print(f"{response}\n")
 
@@ -172,7 +223,7 @@ class SupervisorAgent:
     Return only the Python code without explanation or markdown formatting.
     """
 
-    code_content = self._call_claude_code_sdk("generate_code", code_prompt)
+    code_content = self._call_claude_code("generate_code", code_prompt)
 
     # Clean the code content (remove markdown formatting if present)
     code_content = self._clean_code_content(code_content)
@@ -229,7 +280,7 @@ class SupervisorAgent:
     import *
     """
 
-    test_content = self._call_claude_code_sdk("generate_tests", test_prompt)
+    test_content = self._call_claude_code("generate_tests", test_prompt)
 
     # Clean the test content
     test_content = self._clean_code_content(test_content)
@@ -366,7 +417,7 @@ class SupervisorAgent:
     Provide concise, actionable suggestions for fixing the code.
     """
 
-    feedback = self._call_claude_code_sdk("evaluate", evaluation_prompt)
+    feedback = self._call_llm("evaluate", evaluation_prompt)
     print("\n🔧 Analysis and suggestions:")
     print(f"{feedback}\n")
 
@@ -432,18 +483,56 @@ class SupervisorAgent:
 
     return content
 
-  def _call_claude_code_sdk(self, operation: str, prompt: str) -> str:
-    """Simulate Claude Code SDK calls"""
+  def _call_llm(self, operation: str, prompt: str) -> str:
+    """
+    Wrapper for LLM calls for intermediate processing steps
+    Uses OpenAI via LangChain for faster responses
+    """
     try:
-      print(f"🤖 Calling Claude for {operation}...")
+      print(f"🤖 Calling LLM for {operation}...")
       messages = [HumanMessage(content=prompt)]
       response = self.llm.invoke(messages)
       content = response.content
-      print(f"✅ Claude response received for {operation}")
+      print(f"✅ LLM response received for {operation}")
 
       # Ensure we have string content
       if not isinstance(content, str):
         content = str(content)
+
+      # Check if response is empty or error-like
+      if not content.strip():
+        return f"Empty response received for {operation}"
+
+      return content
+    except Exception as e:
+      error_msg = f"Error in {operation}: {str(e)}"
+      print(f"❌ {error_msg}")
+      return error_msg
+
+  def _call_claude_code(self, operation: str, prompt: str) -> str:
+    """
+    Wrapper for Claude Code SDK calls
+    Uses `claude_code_sdk` (https://github.com/anthropics/claude-code-sdk-python)
+    """
+    try:
+      print(f"🤖 Calling Claude Code for {operation}...")
+
+      # Run the async query function
+      loop = asyncio.new_event_loop()
+      asyncio.set_event_loop(loop)
+
+      try:
+        content = ""
+        async def get_response():
+          nonlocal content
+          async for message in query(prompt=prompt):
+            content += message
+
+        loop.run_until_complete(get_response())
+      finally:
+        loop.close()
+
+      print(f"✅ Claude Code response received for {operation}")
 
       # Check if response is empty or error-like
       if not content.strip():
