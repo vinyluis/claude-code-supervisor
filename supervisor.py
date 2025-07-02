@@ -46,22 +46,32 @@ class AgentState:
 class SupervisorAgent:
   """Supervisor agent that orchestrates code generation and testing"""
 
-  def __init__(self, config_path: str = "config.json"):
+  def __init__(self, config_path: str = "supervisor_config.json"):
     self.config = self._load_config(config_path)
     self.llm = self._initialize_llm()
     self.graph = self._build_graph()
 
   def _load_config(self, config_path: str) -> Dict:
-    """Load configuration from JSON file"""
+    """
+    Load configuration from JSON file.
+    Useful for customizing model parameters and agent behavior without changing the .py file.
+    """
     try:
       with open(config_path, 'r') as f:
         return json.load(f)
     except FileNotFoundError:
       print(f"Config file {config_path} not found. Using defaults.")
       return {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {"max_iterations": 5, "solution_filename": "solution.py",
-                  "test_filename": "test_solution.py", "test_timeout": 30}
+        "model": {
+          "name": "gpt-4o",
+          "temperature": 0.1
+        },
+        "agent": {
+          "max_iterations": 5,
+          "solution_filename": "solution.py",
+          "test_filename": "test_solution.py",
+          "test_timeout": 30
+        },
       }
     except json.JSONDecodeError as e:
       print(f"Error parsing config file: {e}")
@@ -127,9 +137,10 @@ class SupervisorAgent:
     print("📋 Plan generated:")
     print(f"{response}\n")
 
-    if state.messages is not None:
-      state.messages.append(HumanMessage(content=planning_prompt))
-      state.messages.append(AIMessage(content=response))
+    if state.messages is None:
+      state.messages = []
+    state.messages.append(HumanMessage(content=planning_prompt))
+    state.messages.append(AIMessage(content=response))
     return state
 
   def _generate_code(self, state: AgentState) -> AgentState:
@@ -334,8 +345,8 @@ class SupervisorAgent:
     # Truncate very long test results for better analysis
     test_results_summary = state.test_results
     if len(test_results_summary) > 2000:
-      test_results_summary = (test_results_summary[:2000] +
-                              "\n... (truncated for analysis)")
+      test_results_summary = (test_results_summary[:2000]
+                              + "\n... (truncated for analysis)")
 
     evaluation_prompt = f"""
     Analyze these test results and provide specific, actionable feedback:
@@ -472,7 +483,7 @@ class SupervisorAgent:
       return initial_state
 
 
-def main():
+def run():
   """CLI interface"""
   if len(sys.argv) < 2:
     print("\n🤖 SupervisorAgent - Automated Code Generation and Testing")
@@ -542,4 +553,4 @@ def main():
 
 
 if __name__ == "__main__":
-  main()
+  run()
