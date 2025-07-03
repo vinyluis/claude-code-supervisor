@@ -21,8 +21,8 @@
     "javascript_runtime": "node",
     "executable_args": [],
     "claude_code_path": null,
-    "session_timeout_seconds": 300,
-    "activity_timeout_seconds": 180,
+    "session_timeout_seconds": 600,
+    "activity_timeout_seconds": 300,
     "max_turns": 20,
     "max_thinking_tokens": 8000
   }
