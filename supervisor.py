@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import time
 from datetime import datetime
+from typing import Any
 
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage
@@ -49,6 +50,7 @@ from claude_code_sdk.types import (
   SystemMessage
 )
 from dotenv import load_dotenv
+from data_manager import DataManager, DataFile
 
 
 @dataclass
@@ -65,13 +67,20 @@ class AgentState:
   is_solved: bool = False
   error_message: str = ""
   guidance_messages: list = field(default_factory=list)
-  # New fields for session tracking
+  # Session tracking fields
   claude_session_id: str | None = None
   claude_session_active: bool = False
   claude_todos: list[dict] = field(default_factory=list)
   claude_output_log: list[str] = field(default_factory=list)
   guidance_provided: bool = False
   last_activity_time: float = 0.0
+  # Data I/O fields
+  input_data: Any = None
+  expected_output: Any = None
+  data_format: str = "auto"
+  input_data_files: list[DataFile] = field(default_factory=list)
+  output_data: Any = None
+  data_manager: DataManager | None = None
 
   def __post_init__(self) -> None:
     self.last_activity_time = time.time()
@@ -140,6 +149,7 @@ class SupervisorAgent:
     self._load_environment()
     self.config = self._load_config(config_path)
     self.custom_prompt = custom_prompt
+    self.data_manager = DataManager()
     self.llm = self._initialize_llm()
     self._initialize_claude_code()
     self.graph = self._build_graph()
@@ -272,7 +282,41 @@ class SupervisorAgent:
     """Initiate a Claude Code session for the problem"""
     print(f"\n[{self._timestamp()}] 🚀 Initiating Claude Code session...")
 
+    # Handle input data if provided
+    data_files_info = ""
+    if state.input_data is not None:
+      try:
+        print(f"[{self._timestamp()}] 📊 Processing input data...")
+        data_file = state.data_manager.serialize_input(
+          state.input_data, 
+          format=state.data_format,
+          name_prefix="input_data"
+        )
+        state.input_data_files.append(data_file)
+        
+        data_files_info = f"""
+
+Input Data Available:
+- File: {data_file.path}
+- Format: {data_file.format}
+- Description: {data_file.description}
+
+Make sure to read and use this input data in your solution. The file is available in the current working directory as '{os.path.basename(data_file.path)}'.
+"""
+        print(f"[{self._timestamp()}] 📁 Input data saved to: {data_file.path}")
+        
+      except Exception as e:
+        print(f"[{self._timestamp()}] ❌ Failed to process input data: {e}")
+        state.error_message = f"Failed to process input data: {e}"
+        return state
+
     # Prepare the problem statement for Claude Code
+    expected_output_info = ""
+    if state.expected_output is not None:
+      expected_output_info = f"\nExpected output format: {type(state.expected_output).__name__}"
+      if hasattr(state.expected_output, '__len__') and len(state.expected_output) < 10:
+        expected_output_info += f"\nExpected result example: {state.expected_output}"
+
     problem_prompt = f"""\
 I need you to solve this programming problem step by step. Please:
 
@@ -283,6 +327,8 @@ I need you to solve this programming problem step by step. Please:
 
 Problem: {state.problem_description}
 {f'Expected behavior: {state.example_output}' if state.example_output else ''}
+{expected_output_info}
+{data_files_info}
 
 Requirements:
 - Use Python
@@ -290,6 +336,8 @@ Requirements:
 - Save tests as '{state.test_path}'
 - Follow clean code practices with docstrings and type hints
 - Ensure all tests pass before completing
+{'- If input data is provided, make sure to read and process it correctly' if state.input_data is not None else ''}
+{'- Return results in the same format as the expected output' if state.expected_output is not None else ''}
 
 Please start by creating a todo list to plan your approach, then implement the solution.
 """
@@ -321,7 +369,26 @@ Please start by creating a todo list to plan your approach, then implement the s
     try:
       # Build the prompt for continuation or initial request
       if state.current_iteration == 0:
-        # First iteration - send the initial problem
+        # First iteration - send the initial problem with data info
+        data_files_info = ""
+        if state.input_data_files:
+          data_file = state.input_data_files[0]  # Use first data file
+          data_files_info = f"""
+
+Input Data Available:
+- File: {os.path.basename(data_file.path)}
+- Format: {data_file.format}
+- Description: {data_file.description}
+
+Make sure to read and use this input data in your solution.
+"""
+
+        expected_output_info = ""
+        if state.expected_output is not None:
+          expected_output_info = f"\nExpected output format: {type(state.expected_output).__name__}"
+          if hasattr(state.expected_output, '__len__') and len(state.expected_output) < 10:
+            expected_output_info += f"\nExpected result example: {state.expected_output}"
+
         problem_prompt = f"""\
 I need you to solve this programming problem step by step. Please:
 
@@ -332,6 +399,8 @@ I need you to solve this programming problem step by step. Please:
 
 Problem: {state.problem_description}
 {f'Expected behavior: {state.example_output}' if state.example_output else ''}
+{expected_output_info}
+{data_files_info}
 
 Requirements:
 - Use Python
@@ -339,6 +408,8 @@ Requirements:
 - Save tests as '{state.test_path}'
 - Follow clean code practices with docstrings and type hints
 - Ensure all tests pass before completing
+{'- If input data is provided, make sure to read and process it correctly' if state.input_data is not None else ''}
+{'- Return results in the same format as the expected output' if state.expected_output is not None else ''}
 
 Please start by creating a todo list to plan your approach, then implement the solution.
 """
@@ -518,7 +589,108 @@ Please update your todo list and continue with the implementation.
       return state
 
     # Run the tests to validate
-    return self._run_tests(state)
+    state = self._run_tests(state)
+    
+    # If tests passed and we have input data, try to extract output data
+    if state.is_solved and state.input_data is not None:
+      state = self._extract_output_data(state)
+    
+    return state
+
+  def _extract_output_data(self, state: AgentState) -> AgentState:
+    """Extract output data by running the solution with input data"""
+    print(f"\n[{self._timestamp()}] 📤 Extracting output data from solution...")
+    
+    try:
+      # Import the solution module dynamically
+      import importlib.util
+      import sys
+      
+      # Load the solution module
+      spec = importlib.util.spec_from_file_location("solution_module", state.solution_path)
+      solution_module = importlib.util.module_from_spec(spec)
+      spec.loader.exec_module(solution_module)
+      
+      # Try to find a main function or process function
+      possible_functions = ['main', 'process', 'solve', 'run', 'execute']
+      main_function = None
+      
+      for func_name in possible_functions:
+        if hasattr(solution_module, func_name):
+          main_function = getattr(solution_module, func_name)
+          break
+      
+      if main_function is None:
+        # If no standard function found, try to find any callable function
+        functions = [getattr(solution_module, name) for name in dir(solution_module) 
+                    if callable(getattr(solution_module, name)) and not name.startswith('_')]
+        if functions:
+          main_function = functions[0]  # Use the first callable function
+      
+      if main_function is not None:
+        print(f"[{self._timestamp()}] 🔧 Found function: {main_function.__name__}")
+        
+        # Try to call the function with input data
+        try:
+          if state.input_data_files:
+            # Pass the input file path as argument
+            data_file = state.input_data_files[0]
+            result = main_function(data_file.path)
+          else:
+            # Call without arguments
+            result = main_function()
+          
+          state.output_data = result
+          print(f"[{self._timestamp()}] ✅ Output data extracted: {type(result).__name__}")
+          
+          # Validate against expected output if provided
+          if state.expected_output is not None:
+            if self._validate_output(result, state.expected_output):
+              print(f"[{self._timestamp()}] ✅ Output matches expected format!")
+            else:
+              print(f"[{self._timestamp()}] ⚠️ Output format doesn't match expected format")
+              
+        except Exception as e:
+          print(f"[{self._timestamp()}] ❌ Failed to execute function: {e}")
+          state.error_message = f"Failed to execute solution function: {e}"
+      
+      else:
+        print(f"[{self._timestamp()}] ⚠️ No callable main function found in solution")
+        
+    except Exception as e:
+      print(f"[{self._timestamp()}] ❌ Failed to extract output data: {e}")
+      # Don't mark as unsolved, this is optional
+    
+    return state
+
+  def _validate_output(self, actual: Any, expected: Any) -> bool:
+    """Validate that actual output matches expected output format/type"""
+    try:
+      # Check type compatibility
+      if type(actual) != type(expected):
+        return False
+      
+      # For collections, check structure
+      if isinstance(expected, (list, tuple)):
+        if len(actual) != len(expected):
+          return False
+        # Check if all elements have compatible types
+        for a, e in zip(actual, expected):
+          if type(a) != type(e):
+            return False
+      
+      elif isinstance(expected, dict):
+        if set(actual.keys()) != set(expected.keys()):
+          return False
+        # Check value types
+        for key in expected:
+          if type(actual[key]) != type(expected[key]):
+            return False
+      
+      return True
+      
+    except Exception:
+      return False
 
   def _provide_guidance(self, state: AgentState) -> AgentState:
     """Provide guidance to Claude Code when it encounters issues"""
@@ -753,6 +925,12 @@ Please update your todo list and continue working on the solution, addressing th
             f"{state.current_iteration} iterations!")
       print(f"[{self._timestamp()}] 💾 Code saved to: {state.solution_path}")
       print(f"[{self._timestamp()}] 💾 Tests saved to: {state.test_path}")
+      
+      if state.output_data is not None:
+        print(f"[{self._timestamp()}] 📊 Output data: {type(state.output_data).__name__}")
+        if hasattr(state.output_data, '__len__') and len(state.output_data) < 20:
+          print(f"[{self._timestamp()}] 📊 Result: {state.output_data}")
+      
       print(f"\n[{self._timestamp()}] 🚀 You can run the tests manually with: "
             f"pytest {state.test_path}")
     else:
@@ -765,18 +943,43 @@ Please update your todo list and continue working on the solution, addressing th
       if os.path.exists(state.test_path):
         print(f"[{self._timestamp()}]   - {state.test_path}")
 
+    # Clean up temporary data files
+    if state.data_manager:
+      cleaned_count = state.data_manager.cleanup()
+      if cleaned_count > 0:
+        print(f"[{self._timestamp()}] 🧹 Cleaned up {cleaned_count} temporary data files")
+
     return state
 
   def process(self, problem_description: str,
+              input_data: Any = None,
+              expected_output: Any = None,
+              data_format: str = "auto",
               example_output: str | None = None) -> AgentState:
-    """Main method to process a problem"""
+    """
+    Main method to process a problem with optional input/output data.
+    
+    Args:
+        problem_description: Description of the problem to solve
+        input_data: Input data for Claude Code to work with (optional)
+        expected_output: Expected output for validation (optional)
+        data_format: Format hint for data handling ('auto', 'csv', 'json', etc.)
+        example_output: Text description of expected output (optional)
+        
+    Returns:
+        AgentState with results and any output data
+    """
     initial_state = AgentState(
       problem_description=problem_description,
       example_output=example_output,
+      input_data=input_data,
+      expected_output=expected_output,
+      data_format=data_format,
       max_iterations=self.config["agent"]["max_iterations"],
       solution_path=self.config["agent"]["solution_filename"],
       test_path=self.config["agent"]["test_filename"],
       config=self.config,
+      data_manager=self.data_manager
     )
 
     print(f"[{self._timestamp()}] 🚀 Starting problem solving: {problem_description}")
