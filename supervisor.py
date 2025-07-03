@@ -452,14 +452,33 @@ Please update your todo list and continue with the implementation.
       try:
         loop.run_until_complete(process_claude_session())
       finally:
-        # Cancel all remaining tasks to prevent "task destroyed" warnings
-        pending_tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
-        if pending_tasks:
-          for task in pending_tasks:
-            task.cancel()
-          # Wait for all tasks to be cancelled
-          loop.run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
-        loop.close()
+        # Give tasks a moment to complete naturally before cleanup
+        try:
+          # Wait a brief moment for tasks to finish naturally
+          loop.run_until_complete(asyncio.sleep(0.1))
+          
+          # Only cancel tasks that are still pending and not from external libraries
+          pending_tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
+          if pending_tasks:
+            # Cancel tasks more gently
+            for task in pending_tasks:
+              if not task.cancelled():
+                task.cancel()
+            
+            # Give cancelled tasks time to handle cancellation
+            try:
+              loop.run_until_complete(asyncio.wait_for(
+                asyncio.gather(*pending_tasks, return_exceptions=True), 
+                timeout=1.0
+              ))
+            except asyncio.TimeoutError:
+              # If tasks don't respond to cancellation within 1 second, let them be
+              pass
+        except Exception:
+          # If cleanup fails, continue anyway
+          pass
+        finally:
+          loop.close()
 
       # Mark session as inactive after completion or timeout
       state.claude_session_active = not session_complete
