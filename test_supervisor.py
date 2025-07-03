@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch, mock_open
 
 # Import the classes to test
 from supervisor import SupervisorAgent, AgentState
+from data_manager import DataManager, DataFile
 
 
 class TestAgentState:
@@ -31,13 +32,20 @@ class TestAgentState:
     assert state.is_solved is False
     assert state.error_message == ""
     assert state.guidance_messages == []
-    # New fields from updated architecture
+    # Session tracking fields
     assert state.claude_session_id is None
     assert state.claude_session_active is False
     assert state.claude_todos == []
     assert state.claude_output_log == []
     assert state.guidance_provided is False
     assert state.last_activity_time > 0  # Should be set in __post_init__
+    # Data I/O fields
+    assert state.input_data is None
+    assert state.expected_output is None
+    assert state.data_format == "auto"
+    assert state.input_data_files == []
+    assert state.output_data is None
+    assert state.data_manager is None
 
   def test_agent_state_initialization_custom(self) -> None:
     """Test AgentState with custom parameters"""
@@ -684,6 +692,102 @@ class TestSupervisorAgentIntegration:
       assert result.current_iteration >= 0
       # Verify custom prompt was integrated
       assert "object-oriented design" in agent.base_claude_options.system_prompt
+
+  def test_agent_state_with_io_data(self) -> None:
+    """Test AgentState initialization with I/O data"""
+    input_data = [1, 2, 3, 4]
+    expected_output = [4, 3, 2, 1]
+    data_manager = DataManager()
+    
+    state = AgentState(
+      problem_description="Sort this list in reverse",
+      input_data=input_data,
+      expected_output=expected_output,
+      data_format="list",
+      data_manager=data_manager
+    )
+    
+    assert state.input_data == input_data
+    assert state.expected_output == expected_output
+    assert state.data_format == "list"
+    assert state.data_manager == data_manager
+
+  def test_supervisor_with_data_manager(self) -> None:
+    """Test SupervisorAgent initialization includes DataManager"""
+    with tempfile.TemporaryDirectory() as temp_dir:
+      config_path = os.path.join(temp_dir, "config.json")
+      config_data = {
+        "model": {"name": "gpt-4o", "temperature": 0.1},
+        "agent": {
+          "max_iterations": 5,
+          "solution_filename": "solution.py",
+          "test_filename": "test_solution.py",
+          "test_timeout": 30
+        },
+        "claude_code": {
+          "use_bedrock": False
+        }
+      }
+      with open(config_path, 'w') as f:
+        json.dump(config_data, f)
+
+      agent = SupervisorAgent(config_path)
+      
+      assert hasattr(agent, 'data_manager')
+      assert isinstance(agent.data_manager, DataManager)
+
+  @patch('supervisor.StateGraph')
+  def test_process_with_input_data(self, mock_state_graph) -> None:
+    """Test process method with input data"""
+    # Mock graph workflow
+    mock_graph_instance = Mock()
+    mock_state_graph.return_value.compile.return_value = mock_graph_instance
+
+    # Mock successful workflow result with output data
+    final_state = AgentState(
+      problem_description="Sort this list",
+      input_data=[3, 1, 4, 1, 5],
+      expected_output=[1, 1, 3, 4, 5],
+      data_format="list",
+      output_data=[1, 1, 3, 4, 5],
+      is_solved=True,
+      current_iteration=1,
+      solution_path="solution.py",
+      test_path="test_solution.py"
+    )
+    mock_graph_instance.invoke.return_value = final_state
+
+    # Create agent and test
+    with tempfile.TemporaryDirectory() as temp_dir:
+      config_path = os.path.join(temp_dir, "config.json")
+      config_data = {
+        "model": {"name": "gpt-4o", "temperature": 0.1},
+        "agent": {
+          "max_iterations": 5,
+          "solution_filename": "solution.py",
+          "test_filename": "test_solution.py",
+          "test_timeout": 30
+        },
+        "claude_code": {
+          "use_bedrock": False
+        }
+      }
+      with open(config_path, 'w') as f:
+        json.dump(config_data, f)
+
+      agent = SupervisorAgent(config_path)
+      result = agent.process(
+        "Sort this list in ascending order",
+        input_data=[3, 1, 4, 1, 5],
+        expected_output=[1, 1, 3, 4, 5],
+        data_format="list"
+      )
+
+      assert result.is_solved is True
+      assert result.input_data == [3, 1, 4, 1, 5]
+      assert result.expected_output == [1, 1, 3, 4, 5]
+      assert result.data_format == "list"
+      assert result.output_data == [1, 1, 3, 4, 5]
 
 
 if __name__ == "__main__":
