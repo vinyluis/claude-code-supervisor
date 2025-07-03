@@ -213,14 +213,25 @@ class TestSupervisorAgent:
         "working_directory": "/test/path",
         "javascript_runtime": "node",
         "executable_args": ["--verbose"],
-        "claude_code_path": "/usr/local/bin/claude-code"
+        "claude_code_path": "/usr/local/bin/claude-code",
+        "max_turns": 20,
+        "max_thinking_tokens": 8000
       }
     }
+    agent.custom_prompt = None
+    agent._timestamp = Mock(return_value="12:00:00")
 
     result = agent._initialize_claude_code()
     
     # Method now returns None, just verify it runs without error
     assert result is None
+    # Verify that base_claude_options was created
+    assert hasattr(agent, 'base_claude_options')
+    assert agent.base_claude_options.permission_mode == 'acceptEdits'
+    assert agent.base_claude_options.max_turns == 20
+    assert agent.base_claude_options.max_thinking_tokens == 8000
+    # Verify default system prompt
+    assert "You are an expert Python developer" in agent.base_claude_options.system_prompt
 
   @patch('supervisor.os.environ')
   def test_initialize_claude_code_bedrock(self, mock_environ) -> None:
@@ -232,10 +243,37 @@ class TestSupervisorAgent:
         "use_bedrock": True
       }
     }
+    agent.custom_prompt = None
 
     agent._initialize_claude_code()
 
     mock_environ.__setitem__.assert_called_with("CLAUDE_CODE_USE_BEDROCK", "1")
+
+  @patch('supervisor.os.getenv')
+  def test_initialize_claude_code_with_custom_prompt(self, mock_getenv) -> None:
+    """Test Claude Code initialization with custom prompt"""
+    mock_getenv.return_value = "test-api-key"
+    
+    agent = SupervisorAgent.__new__(SupervisorAgent)
+    agent.config = {
+      "claude_code": {
+        "provider": "anthropic",
+        "use_bedrock": False,
+        "max_turns": 20,
+        "max_thinking_tokens": 8000
+      }
+    }
+    agent.custom_prompt = "Always use type hints and add comprehensive docstrings"
+    agent._timestamp = Mock(return_value="12:00:00")
+
+    result = agent._initialize_claude_code()
+    
+    # Verify that base_claude_options was created with custom prompt
+    assert result is None
+    assert hasattr(agent, 'base_claude_options')
+    assert "You are an expert Python developer" in agent.base_claude_options.system_prompt
+    assert "Always use type hints and add comprehensive docstrings" in agent.base_claude_options.system_prompt
+    assert "Additional instructions:" in agent.base_claude_options.system_prompt
 
 
   @patch('supervisor.load_dotenv')
@@ -603,6 +641,49 @@ class TestSupervisorAgentIntegration:
       result = agent.process("Test problem")
 
       assert "Graph execution error" in result.error_message
+
+  @patch('supervisor.StateGraph')
+  def test_process_with_custom_prompt(self, mock_state_graph) -> None:
+    """Test process method with custom prompt"""
+    # Mock graph workflow
+    mock_graph_instance = Mock()
+    mock_state_graph.return_value.compile.return_value = mock_graph_instance
+
+    # Mock successful workflow result
+    final_state = AgentState(
+      problem_description="Create a hello function",
+      is_solved=True,
+      current_iteration=1,
+      solution_path="solution.py",
+      test_path="test_solution.py"
+    )
+    mock_graph_instance.invoke.return_value = final_state
+
+    # Create agent with custom prompt
+    with tempfile.TemporaryDirectory() as temp_dir:
+      config_path = os.path.join(temp_dir, "config.json")
+      config_data = {
+        "model": {"name": "gpt-4o", "temperature": 0.1},
+        "agent": {
+          "max_iterations": 5,
+          "solution_filename": "solution.py",
+          "test_filename": "test_solution.py",
+          "test_timeout": 30
+        },
+        "claude_code": {
+          "use_bedrock": False
+        }
+      }
+      with open(config_path, 'w') as f:
+        json.dump(config_data, f)
+
+      agent = SupervisorAgent(config_path, custom_prompt="Use object-oriented design")
+      result = agent.process("Create a hello function")
+
+      assert result.is_solved is True
+      assert result.current_iteration >= 0
+      # Verify custom prompt was integrated
+      assert "object-oriented design" in agent.base_claude_options.system_prompt
 
 
 if __name__ == "__main__":

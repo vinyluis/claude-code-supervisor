@@ -109,29 +109,37 @@ class SupervisorAgent:
   - Automatic guidance generation for failed attempts
 
   Example:
-      # Basic usage
-      agent = SupervisorAgent('supervisor_config.json')
-      result = agent.process(
-          'Create a function to calculate fibonacci numbers',
-          'fib(8) should return 21'
-      )
-
-      # Check if solved
-      if result.is_solved:
-          print(f'Solution: {result.solution_path}')
-          print(f'Tests: {result.test_path}')
-      else:
-          print(f'Error: {result.error_message}')
+      >>> # Basic usage
+      >>> agent = SupervisorAgent('supervisor_config.json')
+      >>> result = agent.process(
+      >>>     'Create a function to calculate fibonacci numbers',
+      >>>     'fib(8) should return 21'
+      >>> )
+      >>>
+      >>> # With custom prompt
+      >>> agent = SupervisorAgent('supervisor_config.json', 
+      >>>                        custom_prompt='Use object-oriented design')
+      >>> result = agent.process('Create a calculator')
+      >>>
+      >>> # Check if solved
+      >>> if result.is_solved:
+      >>>     print(f'Solution: {result.solution_path}')
+      >>>     print(f'Tests: {result.test_path}')
+      >>> else:
+      >>>     print(f'Error: {result.error_message}')
 
   Attributes:
       config: Configuration dictionary loaded from JSON file
+      custom_prompt: Optional additional instructions for Claude Code
       llm: OpenAI ChatLLM instance for guidance generation
       graph: LangGraph workflow compiled from node definitions
+      base_claude_options: Pre-configured ClaudeCodeOptions for faster iterations
   """
 
-  def __init__(self, config_path: str = "supervisor_config.json") -> None:
+  def __init__(self, config_path: str = "supervisor_config.json", custom_prompt: str | None = None) -> None:
     self._load_environment()
     self.config = self._load_config(config_path)
+    self.custom_prompt = custom_prompt
     self.llm = self._initialize_llm()
     self._initialize_claude_code()
     self.graph = self._build_graph()
@@ -148,7 +156,7 @@ class SupervisorAgent:
     if env_path.exists():
       load_dotenv(env_path)
     else:
-      print("Warning: .env file not found. Environment variables may need to be set manually.")
+      print("⚠️Warning: .env file not found. Environment variables may need to be set manually.")
 
   def _load_config(self, config_path: str) -> dict:
     """
@@ -159,7 +167,7 @@ class SupervisorAgent:
       with open(config_path, 'r') as f:
         return json.load(f)
     except FileNotFoundError:
-      print(f"Config file {config_path} not found. Using defaults.")
+      print(f"⚠️Config file {config_path} not found. Using defaults.")
       return {
         "model": {
           "name": "gpt-4o",
@@ -185,12 +193,12 @@ class SupervisorAgent:
         }
       }
     except json.JSONDecodeError as e:
-      print(f"Error parsing config file: {e}")
+      print(f"⚠️Error parsing config file: {e}")
       sys.exit(1)
 
   def _initialize_claude_code(self) -> None:
     """
-    Initialize Claude Code SDK configuration
+    Initialize Claude Code SDK configuration and prepare base options
     """
     claude_config = self.config.get("claude_code", {})
 
@@ -205,6 +213,23 @@ class SupervisorAgent:
         print(f"[{self._timestamp()}] Please set your API key in the .env file or environment variables.")
       else:
         print(f"[{self._timestamp()}] 🔧 Configured Claude Code to use Anthropic API")
+
+    # Build system prompt with optional custom prompt
+    base_system_prompt = "You are an expert Python developer. Use the TodoWrite tool to plan and track your work. Always run tests to verify your solutions."
+    if self.custom_prompt:
+      system_prompt = f"{base_system_prompt}\n\nAdditional instructions:\n{self.custom_prompt}"
+    else:
+      system_prompt = base_system_prompt
+
+    # Pre-configure Claude Code options for faster reuse in iterations
+    self.base_claude_options = ClaudeCodeOptions(
+      cwd=os.getcwd(),
+      permission_mode='acceptEdits',
+      max_turns=claude_config.get('max_turns', 20),
+      system_prompt=system_prompt,
+      max_thinking_tokens=claude_config.get('max_thinking_tokens', 8000)
+    )
+    print(f"[{self._timestamp()}] 🔧 Pre-configured Claude Code options for faster iterations")
 
   def _build_graph(self):
     """Build the LangGraph workflow"""
@@ -329,16 +354,16 @@ Please start by creating a todo list to plan your approach, then implement the s
 Please update your todo list and continue with the implementation.
 """
 
-      # Configure Claude Code options for this session
-      claude_config = self.config.get('claude_code', {})
+      # Use pre-configured options and update session-specific parameters
       options = ClaudeCodeOptions(
-        cwd=os.getcwd(),
-        permission_mode='acceptEdits',
-        max_turns=claude_config.get('max_turns', 20),
+        cwd=self.base_claude_options.cwd,
+        permission_mode=self.base_claude_options.permission_mode,
+        max_turns=self.base_claude_options.max_turns,
+        system_prompt=self.base_claude_options.system_prompt,
+        max_thinking_tokens=self.base_claude_options.max_thinking_tokens,
+        # Session-specific parameters that change between iterations
         continue_conversation=state.current_iteration > 0,
-        resume=state.claude_session_id if state.claude_session_id else None,
-        system_prompt="You are an expert Python developer. Use the TodoWrite tool to plan and track your work. Always run tests to verify your solutions.",
-        max_thinking_tokens=claude_config.get('max_thinking_tokens', 8000)
+        resume=state.claude_session_id if state.claude_session_id else None
       )
 
       # Process Claude Code messages with timeout
@@ -357,48 +382,62 @@ Please update your todo list and continue with the implementation.
           start_time = time.time()
           print(f"[{self._timestamp()}] Session timeout set to {timeout_seconds} seconds")
 
-          async for message in query(prompt=problem_prompt, options=options):
-            # Check timeout
-            if time.time() - start_time > timeout_seconds:
-              print(f"[{self._timestamp()}] ⏰ Claude session timed out after {timeout_seconds} seconds")
-              break
+          query_stream = query(prompt=problem_prompt, options=options)
+          try:
+            async for message in query_stream:
+              # Check timeout
+              if time.time() - start_time > timeout_seconds:
+                print(f"[{self._timestamp()}] ⏰ Claude session timed out after {timeout_seconds} seconds")
+                break
 
-            state.last_activity_time = time.time()
+              state.last_activity_time = time.time()
 
-            if isinstance(message, AssistantMessage):
-              for block in message.content:
-                if isinstance(block, TextBlock):
-                  text_responses.append(block.text)
-                  print(f"[{self._timestamp()}] 💬 Claude: {block.text[:200]}{'...' if len(block.text) > 200 else ''}")
-                elif isinstance(block, ToolUseBlock):
-                  tool_calls.append(f"{block.name}: {block.input}")
-                  print(f"[{self._timestamp()}] 🔧 Tool used: {block.name}")
+              if isinstance(message, AssistantMessage):
+                for block in message.content:
+                  if isinstance(block, TextBlock):
+                    text_responses.append(block.text)
+                    print(f"[{self._timestamp()}] 💬 Claude: {block.text[:200]}{'...' if len(block.text) > 200 else ''}")
+                  elif isinstance(block, ToolUseBlock):
+                    tool_calls.append(f"{block.name}: {block.input}")
+                    print(f"[{self._timestamp()}] 🔧 Tool used: {block.name}")
 
-                  # Track todo updates
-                  if block.name == 'TodoWrite':
-                    todos = block.input.get('todos', [])
-                    current_todos = todos
-                    print(f"[{self._timestamp()}] 📋 Todo list updated: {len(todos)} items")
-                    for todo in todos:
-                      status_emoji = {'pending': '⏳', 'in_progress': '🔄', 'completed': '✅'}.get(todo.get('status'), '❓')
-                      print(f"[{self._timestamp()}]   {status_emoji} {todo.get('content', 'Unknown task')}")
+                    # Track todo updates
+                    if block.name == 'TodoWrite':
+                      todos = block.input.get('todos', [])
+                      current_todos = todos
+                      print(f"[{self._timestamp()}] 📋 Todo list updated: {len(todos)} items")
+                      for todo in todos:
+                        status_emoji = {'pending': '⏳', 'in_progress': '🔄', 'completed': '✅'}.get(todo.get('status'), '❓')
+                        print(f"[{self._timestamp()}]   {status_emoji} {todo.get('content', 'Unknown task')}")
 
-                elif isinstance(block, ToolResultBlock):
-                  if block.is_error:
-                    print(f"[{self._timestamp()}] ❌ Tool error: {block.content}")
+                  elif isinstance(block, ToolResultBlock):
+                    if block.is_error:
+                      print(f"[{self._timestamp()}] ❌ Tool error: {block.content}")
 
-            elif isinstance(message, ResultMessage):
-              # Session completed
-              state.claude_session_id = message.session_id
-              session_complete = True
-              print(f"[{self._timestamp()}] ✅ Claude session completed (ID: {message.session_id})")
-              print(f"[{self._timestamp()}] Turns: {message.num_turns}, Duration: {message.duration_ms}ms")
-              if message.total_cost_usd:
-                print(f"[{self._timestamp()}] Cost: ${message.total_cost_usd:.4f}")
-              break
+              elif isinstance(message, ResultMessage):
+                # Session completed
+                state.claude_session_id = message.session_id
+                session_complete = True
+                print(f"[{self._timestamp()}] ✅ Claude session completed (ID: {message.session_id})")
+                print(f"[{self._timestamp()}] Turns: {message.num_turns}, Duration: {message.duration_ms}ms")
+                if message.total_cost_usd:
+                  print(f"[{self._timestamp()}] Cost: ${message.total_cost_usd:.4f}")
+                break
 
-            elif isinstance(message, SystemMessage):
-              print(f"[{self._timestamp()}] ℹ️  System: {message.subtype}")
+              elif isinstance(message, SystemMessage):
+                print(f"[{self._timestamp()}] ℹ️  System: {message.subtype}")
+
+          except asyncio.CancelledError:
+            # Handle cancellation gracefully
+            print(f"[{self._timestamp()}] Claude session was cancelled")
+            raise
+          finally:
+            # Ensure the async generator is properly closed
+            if hasattr(query_stream, 'aclose'):
+              try:
+                await query_stream.aclose()
+              except Exception:
+                pass
 
         except Exception as e:
           print(f"[{self._timestamp()}] ❌ Error in Claude session: {e}")
@@ -413,6 +452,13 @@ Please update your todo list and continue with the implementation.
       try:
         loop.run_until_complete(process_claude_session())
       finally:
+        # Cancel all remaining tasks to prevent "task destroyed" warnings
+        pending_tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
+        if pending_tasks:
+          for task in pending_tasks:
+            task.cancel()
+          # Wait for all tasks to be cancelled
+          loop.run_until_complete(asyncio.gather(*pending_tasks, return_exceptions=True))
         loop.close()
 
       # Mark session as inactive after completion or timeout
@@ -734,20 +780,31 @@ Please update your todo list and continue working on the solution, addressing th
     if len(sys.argv) < 2:
       print("\n🤖 SupervisorAgent - Automated Code Generation and Testing")
       print("=" * 60)
-      print("Usage: python supervisor.py '<problem_description>' [example_output]")
+      print("Usage: python supervisor.py '<problem_description>' [example_output] [--prompt='custom_prompt']")
       print("\nExamples:")
       print("  python supervisor.py 'Create a function to sort a list of numbers'")
       print("  python supervisor.py 'Calculate fibonacci numbers' 'fib(8) = 21'")
       print("  python supervisor.py 'Find the maximum element in a list' "
             "'max([1,5,3]) = 5'")
+      print("  python supervisor.py 'Create a calculator' --prompt='Use object-oriented design'")
       print("\n📝 Configuration is loaded from supervisor_config.json")
       print("🔑 Make sure to set OPENAI_API_KEY environment variable")
       print("📦 Required: pip install pytest langchain langchain-openai "
             "langgraph")
       sys.exit(1)
 
+    # Parse arguments
     problem_description = sys.argv[1]
-    example_output = sys.argv[2] if len(sys.argv) > 2 else None
+    example_output = None
+    custom_prompt = None
+    
+    # Parse remaining arguments
+    for i in range(2, len(sys.argv)):
+      arg = sys.argv[i]
+      if arg.startswith('--prompt='):
+        custom_prompt = arg.split('--prompt=', 1)[1]
+      elif not example_output and not arg.startswith('--'):
+        example_output = arg
 
     # Check for API key
     if not os.getenv("OPENAI_API_KEY"):
@@ -774,9 +831,11 @@ Please update your todo list and continue working on the solution, addressing th
       print(f"\n🎯 Problem: {problem_description}")
       if example_output:
         print(f"📝 Example: {example_output}")
+      if custom_prompt:
+        print(f"💡 Custom prompt: {custom_prompt}")
       print("\n" + "=" * 60)
 
-      agent = cls()
+      agent = cls(custom_prompt=custom_prompt)
       final_state = agent.process(problem_description, example_output)
 
       print("\n" + "=" * 60)

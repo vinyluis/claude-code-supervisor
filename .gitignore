@@ -55,6 +55,7 @@ solution.py
 test_solution.py
 *.generated.py
 test_*.generated.py
+benchmark.py
 
 # Logs
 *.log

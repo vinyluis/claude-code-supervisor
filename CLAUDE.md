@@ -67,6 +67,53 @@ async def main():
         print(message)
 ```
 
+### Using SupervisorAgent with Custom Prompts
+
+The SupervisorAgent class supports custom prompts to provide additional instructions to Claude Code:
+
+```python
+from supervisor import SupervisorAgent
+
+# Basic usage
+agent = SupervisorAgent('supervisor_config.json')
+result = agent.process('Create a sorting function')
+
+# With custom prompt
+agent = SupervisorAgent('supervisor_config.json', 
+                       custom_prompt='Use object-oriented design with proper inheritance')
+result = agent.process('Create a calculator')
+
+# Check results
+if result.is_solved:
+    print(f'Solution: {result.solution_path}')
+    print(f'Tests: {result.test_path}')
+```
+
+### CLI Usage with Custom Prompts
+
+The SupervisorAgent CLI also supports custom prompts via the `--prompt` argument:
+
+```bash
+# Basic usage
+python supervisor.py 'Create a sorting function'
+
+# With custom prompt
+python supervisor.py 'Create a calculator' --prompt='Use object-oriented design'
+
+# With example output and custom prompt
+python supervisor.py 'Create fibonacci function' 'fib(8) = 21' --prompt='Optimize for performance'
+
+# Custom prompt with specific requirements
+python supervisor.py 'Create a web scraper' --prompt='Use requests library and include error handling'
+```
+
+Custom prompts are appended to the base system prompt and allow you to:
+- Specify architectural patterns (OOP, functional, etc.)
+- Add domain-specific requirements
+- Enforce coding standards or conventions
+- Request specific optimizations or approaches
+- Add context about the project or environment
+
 ## Message Types
 
 The SDK yields different message types:
@@ -258,3 +305,8 @@ if __name__ == '__main__':
 5. **Limit `max_turns`** to prevent runaway conversations
 6. **Use `allowed_tools`** to restrict functionality for security
 7. **Process messages asynchronously** to handle real-time responses
+8. **Use custom prompts effectively**: When using SupervisorAgent, leverage custom prompts to:
+   - Specify architectural requirements early in the conversation
+   - Provide domain-specific context and constraints
+   - Enforce consistent coding standards across generated solutions
+   - Guide Claude Code towards optimal implementation approaches
