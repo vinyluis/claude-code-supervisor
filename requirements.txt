@@ -13,6 +13,6 @@ langchain-aws==0.2.27
 langchain-openai==0.3.26
 langgraph==0.4.10
 
-claude-code-sdk
+claude-code-sdk==0.0.14
 pytest
 python-dotenv

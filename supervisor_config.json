@@ -4,7 +4,7 @@
     "temperature": 0.1
   },
   "agent": {
-    "max_iterations": 5,
+    "max_iterations": 3,
     "solution_filename": "solution.py",
     "test_filename": "test_solution.py",
     "test_timeout": 30
@@ -20,6 +20,10 @@
     "working_directory": null,
     "javascript_runtime": "node",
     "executable_args": [],
-    "claude_code_path": null
+    "claude_code_path": null,
+    "session_timeout_seconds": 300,
+    "activity_timeout_seconds": 180,
+    "max_turns": 20,
+    "max_thinking_tokens": 8000
   }
 }

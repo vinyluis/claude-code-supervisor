@@ -10,14 +10,24 @@ import json
 import subprocess
 import asyncio
 from typing import Optional, List, Any, Dict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+import time
+from datetime import datetime
 
 try:
   from langgraph.graph import StateGraph, START, END
-  from langchain_core.messages import HumanMessage, AIMessage
+  from langchain_core.messages import HumanMessage
   from langchain_openai import ChatOpenAI
-  from claude_code_sdk import query
+  from claude_code_sdk import query, ClaudeCodeOptions
+  from claude_code_sdk.types import (
+    AssistantMessage, 
+    TextBlock, 
+    ToolUseBlock, 
+    ToolResultBlock, 
+    ResultMessage, 
+    SystemMessage
+  )
   from dotenv import load_dotenv
 except ImportError as e:
   print(f"Missing required dependencies: {e}")
@@ -41,10 +51,18 @@ class AgentState:
   is_solved: bool = False
   error_message: str = ""
   messages: Optional[List[Any]] = None
+  # New fields for session tracking
+  claude_session_id: Optional[str] = None
+  claude_session_active: bool = False
+  claude_todos: List[Dict] = field(default_factory=list)
+  claude_output_log: List[str] = field(default_factory=list)
+  guidance_provided: bool = False
+  last_activity_time: float = 0.0
 
   def __post_init__(self):
     if self.messages is None:
       self.messages = []
+    self.last_activity_time = time.time()
 
 
 class SupervisorAgent:
@@ -56,6 +74,10 @@ class SupervisorAgent:
     self.llm = self._initialize_llm()
     self.claude_code_config = self._initialize_claude_code()
     self.graph = self._build_graph()
+  
+  def _timestamp(self) -> str:
+    """Get current timestamp for logging"""
+    return datetime.now().strftime('%H:%M:%S')
 
   def _load_environment(self):
     """
@@ -83,7 +105,7 @@ class SupervisorAgent:
           "temperature": 0.1
         },
         "agent": {
-          "max_iterations": 5,
+          "max_iterations": 3,
           "solution_filename": "solution.py",
           "test_filename": "test_solution.py",
           "test_timeout": 30
@@ -94,7 +116,11 @@ class SupervisorAgent:
           "working_directory": None,
           "javascript_runtime": "node",
           "executable_args": [],
-          "claude_code_path": None
+          "claude_code_path": None,
+          "session_timeout_seconds": 300,
+          "activity_timeout_seconds": 180,
+          "max_turns": 20,
+          "max_thinking_tokens": 8000
         }
       }
     except json.JSONDecodeError as e:
@@ -117,14 +143,14 @@ class SupervisorAgent:
     # Set environment variables based on provider choice
     if claude_config.get("use_bedrock", False):
       os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"
-      print("🔧 Configured Claude Code to use Amazon Bedrock")
+      print(f"[{self._timestamp()}] 🔧 Configured Claude Code to use Amazon Bedrock")
     else:
       # Default to Anthropic API
       if not os.getenv("ANTHROPIC_API_KEY"):
-        print("Warning: ANTHROPIC_API_KEY not found in environment. Claude Code SDK may not work properly.")
-        print("Please set your API key in the .env file or environment variables.")
+        print(f"[{self._timestamp()}] Warning: ANTHROPIC_API_KEY not found in environment. Claude Code SDK may not work properly.")
+        print(f"[{self._timestamp()}] Please set your API key in the .env file or environment variables.")
       else:
-        print("🔧 Configured Claude Code to use Anthropic API")
+        print(f"[{self._timestamp()}] 🔧 Configured Claude Code to use Anthropic API")
 
     # Return configuration for potential future use
     return {
@@ -139,184 +165,264 @@ class SupervisorAgent:
     """Build the LangGraph workflow"""
     workflow = StateGraph(AgentState)
 
-    workflow.add_node("plan", self._plan_solution)
-    workflow.add_node("generate_code", self._generate_code)
-    workflow.add_node("generate_tests", self._generate_tests)
-    workflow.add_node("run_tests", self._run_tests)
-    workflow.add_node("evaluate", self._evaluate_results)
-    workflow.add_node("iterate", self._iterate_solution)
+    workflow.add_node("initiate_claude", self._initiate_claude_session)
+    workflow.add_node("monitor_claude", self._monitor_claude_progress)
+    workflow.add_node("validate_solution", self._validate_solution)
+    workflow.add_node("provide_guidance", self._provide_guidance)
     workflow.add_node("finalize", self._finalize_solution)
 
-    workflow.add_edge(START, "plan")
-    workflow.add_edge("plan", "generate_code")
-    workflow.add_edge("generate_code", "generate_tests")
-    workflow.add_edge("generate_tests", "run_tests")
-    workflow.add_edge("run_tests", "evaluate")
-
+    workflow.add_edge(START, "initiate_claude")
+    workflow.add_edge("initiate_claude", "monitor_claude")
+    
     workflow.add_conditional_edges(
-      "evaluate",
-      self._should_continue,
+      "monitor_claude",
+      self._should_continue_monitoring,
       {
-        "continue": "iterate",
+        "continue": "monitor_claude",
+        "validate": "validate_solution",
+        "guide": "provide_guidance",
         "finish": "finalize"
       }
     )
-
-    workflow.add_edge("iterate", "generate_code")
+    
+    workflow.add_edge("validate_solution", "finalize")
+    workflow.add_edge("provide_guidance", "monitor_claude")
     workflow.add_edge("finalize", END)
 
     return workflow.compile()
 
-  def _plan_solution(self, state: AgentState) -> AgentState:
-    """Plan the solution approach"""
-    print("\n🎯 Planning solution...")
-    planning_prompt = f"""
-    Analyze this problem and create a plan for solving it:
+  def _initiate_claude_session(self, state: AgentState) -> AgentState:
+    """Initiate a Claude Code session for the problem"""
+    print(f"\n[{self._timestamp()}] 🚀 Initiating Claude Code session...")
+    
+    # Prepare the problem statement for Claude Code
+    problem_prompt = f"""\
+I need you to solve this programming problem step by step. Please:
 
-    Problem: {state.problem_description}
-    Example Output: {state.example_output or 'Not provided'}
+1. Create your own plan using the TodoWrite tool to track your progress
+2. Implement a complete solution with proper error handling
+3. Create comprehensive tests for your solution
+4. Run the tests to verify everything works
 
-    Provide a brief plan for the solution approach, including:
-    1. Key components needed
-    2. Main algorithm or logic
-    3. Expected structure
+Problem: {state.problem_description}
+{f'Expected behavior: {state.example_output}' if state.example_output else ''}
 
-    Keep the plan concise and focused.
-    """
+Requirements:
+- Use Python
+- Save the solution as '{state.solution_path}'
+- Save tests as '{state.test_path}'
+- Follow clean code practices with docstrings and type hints
+- Ensure all tests pass before completing
 
-    response = self._call_llm("plan", planning_prompt)
-    print("📋 Plan generated:")
-    print(f"{response}\n")
-
-    if state.messages is None:
-      state.messages = []
-    state.messages.append(HumanMessage(content=planning_prompt))
-    state.messages.append(AIMessage(content=response))
-    return state
-
-  def _generate_code(self, state: AgentState) -> AgentState:
-    """Generate code solution"""
-    iteration_text = (f" (Iteration {state.current_iteration + 1})"
-                      if state.current_iteration > 0 else "")
-    print(f"\n💻 Generating code{iteration_text}...")
-
-    code_prompt = f"""
-    Generate Python code to solve this problem:
-
-    Problem: {state.problem_description}
-    Example Output: {state.example_output or 'Not provided'}
-    Current Iteration: {state.current_iteration}
-
-    {f"Previous test results: {state.test_results}"
-     if state.test_results else ""}
-    {f"Previous errors: {state.error_message}"
-     if state.error_message else ""}
-
-    Requirements:
-    - Create a class-based solution with a clear main method
-    - Include proper error handling and input validation
-    - Add comprehensive docstrings
-    - Make it production-ready
-    - Ensure all imports are at the top
-    - Handle edge cases gracefully
-
-    Return only the Python code without explanation or markdown formatting.
-    """
-
-    code_content = self._call_claude_code("generate_code", code_prompt)
-
-    # Clean the code content (remove markdown formatting if present)
-    code_content = self._clean_code_content(code_content)
-
-    print(f"\n📝 Code generated and saved to {state.solution_path}")
-    print("Preview (first 10 lines):")
-    lines = code_content.split('\n')[:10]
-    for i, line in enumerate(lines, 1):
-      print(f"{i:2d}: {line}")
-    if len(code_content.split('\n')) > 10:
-      print(f"... ({len(code_content.split('\n')) - 10} more lines)\n")
-    else:
-      print()
-
+Please start by creating a todo list to plan your approach, then implement the solution.
+"""
+    
+    # Start the Claude Code session
     try:
-      with open(state.solution_path, 'w') as f:
-        f.write(code_content)
+      state.claude_session_active = True
+      state.last_activity_time = time.time()
+      print(f"[{self._timestamp()}] 📝 Sending problem to Claude Code...")
+      print(f"[{self._timestamp()}] Working directory: {os.getcwd()}")
+      
+      # Store the initial prompt
+      state.claude_output_log.append(f"PROMPT: {problem_prompt}")
+      
+      return state
     except Exception as e:
-      print(f"❌ Error saving code to {state.solution_path}: {e}")
-      state.error_message = f"Failed to save code: {e}"
+      print(f"[{self._timestamp()}] ❌ Failed to initiate Claude session: {e}")
+      state.error_message = f"Failed to initiate Claude session: {e}"
+      state.claude_session_active = False
       return state
 
-    state.code_content = code_content
-    return state
-
-  def _generate_tests(self, state: AgentState) -> AgentState:
-    """Generate test cases"""
-    print("\n🧪 Generating tests...")
-
-    # Extract the module name from solution path for proper imports
-    module_name = state.solution_path.replace('.py', '')
-
-    test_prompt = f"""
-    Generate comprehensive test cases for this code:
-
-    Problem: {state.problem_description}
-    Example Output: {state.example_output or 'Not provided'}
-
-    Code to test:
-    {state.code_content}
-
-    Requirements:
-    - Use pytest framework
-    - Import from {module_name} (the solution file)
-    - Include edge cases and boundary conditions
-    - Test both success and failure scenarios
-    - Test with the exact example provided if available
-    - Add clear test descriptions and assertions
-    - Handle potential import errors gracefully
-    - Include at least 3-5 test functions
-
-    Return only the test code without explanation or markdown formatting.
-    Start with necessary imports like: import pytest, from {module_name}
-    import *
-    """
-
-    test_content = self._call_claude_code("generate_tests", test_prompt)
-
-    # Clean the test content
-    test_content = self._clean_code_content(test_content)
-
-    print(f"\n🔬 Tests generated and saved to {state.test_path}")
-    test_lines = test_content.split('\n')
-    test_functions = [line for line in test_lines
-                      if line.strip().startswith('def test_')]
-    if test_functions:
-      print(f"Generated {len(test_functions)} test functions:")
-      for func in test_functions:
-        print(f"  - {func.strip()}")
-    else:
-      print("⚠️ Warning: No test functions detected in generated tests")
-    print()
-
+  def _monitor_claude_progress(self, state: AgentState) -> AgentState:
+    """Monitor Claude Code's progress and track its activities"""
+    if not state.claude_session_active:
+      return state
+      
+    print(f"\n[{self._timestamp()}] 👁️  Monitoring Claude Code progress...")
+    
     try:
-      with open(state.test_path, 'w') as f:
-        f.write(test_content)
+      # Build the prompt for continuation or initial request
+      if state.current_iteration == 0:
+        # First iteration - send the initial problem
+        problem_prompt = f"""\
+I need you to solve this programming problem step by step. Please:
+
+1. Create your own plan using the TodoWrite tool to track your progress
+2. Implement a complete solution with proper error handling
+3. Create comprehensive tests for your solution
+4. Run the tests to verify everything works
+
+Problem: {state.problem_description}
+{f'Expected behavior: {state.example_output}' if state.example_output else ''}
+
+Requirements:
+- Use Python
+- Save the solution as '{state.solution_path}'
+- Save tests as '{state.test_path}'
+- Follow clean code practices with docstrings and type hints
+- Ensure all tests pass before completing
+
+Please start by creating a todo list to plan your approach, then implement the solution.
+"""
+      else:
+        # Subsequent iterations - provide guidance or continue session
+        problem_prompt = f"""\
+Continue working on the problem. {state.error_message if state.error_message else ''}
+
+Please update your todo list and continue with the implementation.
+"""
+      
+      # Configure Claude Code options for this session
+      claude_config = self.config.get('claude_code', {})
+      options = ClaudeCodeOptions(
+        cwd=os.getcwd(),
+        permission_mode='acceptEdits',
+        max_turns=claude_config.get('max_turns', 20),
+        continue_conversation=state.current_iteration > 0,
+        resume=state.claude_session_id if state.claude_session_id else None,
+        system_prompt="You are an expert Python developer. Use the TodoWrite tool to plan and track your work. Always run tests to verify your solutions.",
+        max_thinking_tokens=claude_config.get('max_thinking_tokens', 8000)
+      )
+      
+      # Process Claude Code messages with timeout
+      session_complete = False
+      current_todos = []
+      text_responses = []
+      tool_calls = []
+      
+      async def process_claude_session():
+        nonlocal session_complete, current_todos, text_responses, tool_calls
+        
+        try:
+          # Add timeout to prevent infinite waiting
+          claude_config = self.config.get('claude_code', {})
+          timeout_seconds = claude_config.get('session_timeout_seconds', 300)
+          start_time = time.time()
+          print(f"[{self._timestamp()}] Session timeout set to {timeout_seconds} seconds")
+          
+          async for message in query(prompt=problem_prompt, options=options):
+            # Check timeout
+            if time.time() - start_time > timeout_seconds:
+              print(f"[{self._timestamp()}] ⏰ Claude session timed out after {timeout_seconds} seconds")
+              break
+              
+            state.last_activity_time = time.time()
+            
+            if isinstance(message, AssistantMessage):
+              for block in message.content:
+                if isinstance(block, TextBlock):
+                  text_responses.append(block.text)
+                  print(f"[{self._timestamp()}] 💬 Claude: {block.text[:200]}{'...' if len(block.text) > 200 else ''}")
+                elif isinstance(block, ToolUseBlock):
+                  tool_calls.append(f"{block.name}: {block.input}")
+                  print(f"[{self._timestamp()}] 🔧 Tool used: {block.name}")
+                  
+                  # Track todo updates
+                  if block.name == 'TodoWrite':
+                    todos = block.input.get('todos', [])
+                    current_todos = todos
+                    print(f"[{self._timestamp()}] 📋 Todo list updated: {len(todos)} items")
+                    for todo in todos:
+                      status_emoji = {'pending': '⏳', 'in_progress': '🔄', 'completed': '✅'}.get(todo.get('status'), '❓')
+                      print(f"[{self._timestamp()}]   {status_emoji} {todo.get('content', 'Unknown task')}")
+                      
+                elif isinstance(block, ToolResultBlock):
+                  if block.is_error:
+                    print(f"[{self._timestamp()}] ❌ Tool error: {block.content}")
+                    
+            elif isinstance(message, ResultMessage):
+              # Session completed
+              state.claude_session_id = message.session_id
+              session_complete = True
+              print(f"[{self._timestamp()}] ✅ Claude session completed (ID: {message.session_id})")
+              print(f"[{self._timestamp()}] Turns: {message.num_turns}, Duration: {message.duration_ms}ms")
+              if message.total_cost_usd:
+                print(f"[{self._timestamp()}] Cost: ${message.total_cost_usd:.4f}")
+              break
+              
+            elif isinstance(message, SystemMessage):
+              print(f"[{self._timestamp()}] ℹ️  System: {message.subtype}")
+              
+        except Exception as e:
+          print(f"[{self._timestamp()}] ❌ Error in Claude session: {e}")
+          session_complete = True  # Mark as complete to exit
+        finally:
+          # Ensure proper cleanup
+          session_complete = True
+      
+      # Run the async session
+      loop = asyncio.new_event_loop()
+      asyncio.set_event_loop(loop)
+      try:
+        loop.run_until_complete(process_claude_session())
+      finally:
+        loop.close()
+        
+      # Mark session as inactive after completion or timeout
+      state.claude_session_active = not session_complete
+      
+      # Update state with results
+      state.claude_todos = current_todos
+      state.claude_output_log.extend(text_responses)
+      
+      # Check if files were created
+      if os.path.exists(state.solution_path):
+        with open(state.solution_path, 'r') as f:
+          state.code_content = f.read()
+        print(f"[{self._timestamp()}] 📄 Solution file detected: {state.solution_path}")
+        
+      if os.path.exists(state.test_path):
+        with open(state.test_path, 'r') as f:
+          state.test_content = f.read()
+        print(f"[{self._timestamp()}] 🧪 Test file detected: {state.test_path}")
+      
+      return state
+      
     except Exception as e:
-      print(f"❌ Error saving tests to {state.test_path}: {e}")
-      state.error_message = f"Failed to save tests: {e}"
+      print(f"[{self._timestamp()}] ❌ Error monitoring Claude session: {e}")
+      state.error_message = f"Monitoring error: {e}"
+      state.claude_session_active = False
       return state
 
-    state.test_content = test_content
-    return state
+  def _validate_solution(self, state: AgentState) -> AgentState:
+    """Validate the solution created by Claude Code"""
+    print(f"\n[{self._timestamp()}] 🔍 Validating Claude's solution...")
+    
+    # Check if both files exist
+    if not os.path.exists(state.solution_path):
+      state.error_message = f"Solution file {state.solution_path} not created"
+      state.is_solved = False
+      return state
+      
+    if not os.path.exists(state.test_path):
+      state.error_message = f"Test file {state.test_path} not created"
+      state.is_solved = False
+      return state
+    
+    # Run the tests to validate
+    return self._run_tests(state)
 
+  def _provide_guidance(self, state: AgentState) -> AgentState:
+    """Provide guidance to Claude Code when it encounters issues"""
+    print(f"\n[{self._timestamp()}] 🎯 Providing guidance to Claude Code...")
+    
+    # Analyze what went wrong
+    # The guidance will be provided in the next monitoring cycle
+    state.guidance_provided = True
+    state.error_message = ""  # Clear the error after providing guidance
+    
+    return state
+  
   def _run_tests(self, state: AgentState) -> AgentState:
     """Execute the tests"""
-    print("\n▶️  Running tests...")
+    print(f"\n[{self._timestamp()}] ▶️  Running tests...")
 
     # Check if test file exists and has content
     if not os.path.exists(state.test_path):
       state.test_results = f"Test file {state.test_path} does not exist"
       state.is_solved = False
-      print(f"❌ Test file not found: {state.test_path}\n")
+      print(f"[{self._timestamp()}] ❌ Test file not found: {state.test_path}\n")
       return state
 
     # Check if solution file exists
@@ -324,7 +430,7 @@ class SupervisorAgent:
       state.test_results = (f"Solution file {state.solution_path} "
                             "does not exist")
       state.is_solved = False
-      print(f"❌ Solution file not found: {state.solution_path}\n")
+      print(f"[{self._timestamp()}] ❌ Solution file not found: {state.solution_path}\n")
       return state
 
     try:
@@ -338,7 +444,7 @@ class SupervisorAgent:
             compile(f.read(), file_path, 'exec')
         except SyntaxError as e:
           error_msg = f"Syntax error in {file_type} file {file_path}: {e}"
-          print(f"❌ {error_msg}")
+          print(f"[{self._timestamp()}] ❌ {error_msg}")
           state.test_results = error_msg
           state.is_solved = False
           return state
@@ -359,107 +465,92 @@ class SupervisorAgent:
       state.is_solved = result.returncode == 0
 
       if state.is_solved:
-        print("✅ All tests passed!")
+        print(f"[{self._timestamp()}] ✅ All tests passed!")
         print(f"Test output:\n{result.stdout}")
       else:
-        print(f"❌ Tests failed (exit code: {result.returncode})")
+        print(f"[{self._timestamp()}] ❌ Tests failed (exit code: {result.returncode})")
         print(f"Test output:\n{result.stdout}")
         if result.stderr:
           print(f"Errors:\n{result.stderr}")
+        # Store error for guidance
+        state.error_message = f"Test failures: {result.stdout}\n{result.stderr}"
       print()
 
     except subprocess.TimeoutExpired:
       timeout = state.config["agent"]["test_timeout"] if state.config else 30
       state.test_results = f"Tests timed out after {timeout} seconds"
       state.is_solved = False
-      print(f"⏰ Tests timed out after {timeout} seconds\n")
+      state.error_message = f"Tests timed out after {timeout} seconds"
+      print(f"[{self._timestamp()}] ⏰ Tests timed out after {timeout} seconds\n")
     except FileNotFoundError:
       state.test_results = ("pytest not found. "
                             "Please install pytest: pip install pytest")
       state.is_solved = False
-      print("❌ pytest not found. Install with: pip install pytest\n")
+      state.error_message = "pytest not found"
+      print(f"[{self._timestamp()}] ❌ pytest not found. Install with: pip install pytest\n")
     except Exception as e:
       state.test_results = f"Error running tests: {str(e)}"
       state.is_solved = False
-      print(f"💥 Error running tests: {str(e)}\n")
+      state.error_message = f"Error running tests: {str(e)}"
+      print(f"[{self._timestamp()}] 💥 Error running tests: {str(e)}\n")
 
     return state
 
-  def _evaluate_results(self, state: AgentState) -> AgentState:
-    """Evaluate test results and determine next steps"""
-    if state.is_solved:
-      print("🎉 Problem solved successfully!")
-      return state
-
-    print("\n🔍 Evaluating test failures...")
-
-    # Truncate very long test results for better analysis
-    test_results_summary = state.test_results
-    if len(test_results_summary) > 2000:
-      test_results_summary = (test_results_summary[:2000]
-                              + "\n... (truncated for analysis)")
-
-    evaluation_prompt = f"""
-    Analyze these test results and provide specific, actionable feedback:
-
-    Problem: {state.problem_description}
-    Example Expected Output: {state.example_output or 'Not provided'}
-    Test Results: {test_results_summary}
-    Current Iteration: {state.current_iteration + 1}
-
-    Focus on:
-    1. The most critical errors preventing tests from passing
-    2. Specific code changes needed (don't just describe problems)
-    3. Import issues, syntax errors, or missing methods
-    4. Logic errors in the implementation
-    5. Edge cases that aren't handled
-
-    Provide concise, actionable suggestions for fixing the code.
-    """
-
-    feedback = self._call_llm("evaluate", evaluation_prompt)
-    print("\n🔧 Analysis and suggestions:")
-    print(f"{feedback}\n")
-
-    state.error_message = feedback
-    return state
-
-  def _iterate_solution(self, state: AgentState) -> AgentState:
-    """Prepare for next iteration"""
-    state.current_iteration += 1
-    print(f"\n🔄 Starting iteration {state.current_iteration + 1} "
-          f"of {state.max_iterations}...")
-    return state
+  def _should_continue_monitoring(self, state: AgentState) -> str:
+    """Decide what to do next based on Claude's progress"""
+    # Check if we've exceeded maximum iterations
+    if state.current_iteration >= state.max_iterations:
+      return "finish"
+    
+    # If Claude session is not active, we need guidance
+    if not state.claude_session_active and state.error_message:
+      if not state.guidance_provided:
+        state.current_iteration += 1
+        return "guide"
+      else:
+        return "finish"
+    
+    # Check if solution files exist
+    if os.path.exists(state.solution_path) and os.path.exists(state.test_path):
+      return "validate"
+    
+    # Check for timeout (Claude has been working too long without progress)
+    current_time = time.time()
+    claude_config = self.config.get('claude_code', {})
+    activity_timeout = claude_config.get('activity_timeout_seconds', 180)
+    if current_time - state.last_activity_time > activity_timeout:
+      state.error_message = f"Claude Code session timed out after {activity_timeout} seconds of inactivity"
+      state.claude_session_active = False
+      return "guide"
+    
+    # Continue monitoring if Claude is still active
+    if state.claude_session_active:
+      return "continue"
+    
+    # Default to finishing if we're in an unknown state
+    return "finish"
 
   def _finalize_solution(self, state: AgentState) -> AgentState:
     """Finalize the solution"""
     if state.is_solved:
-      print(f"\n🎉 Solution completed successfully after "
+      print(f"\n[{self._timestamp()}] 🎉 Solution completed successfully after "
             f"{state.current_iteration} iterations!")
-      print(f"💾 Code saved to: {state.solution_path}")
-      print(f"💾 Tests saved to: {state.test_path}")
-      print(f"\n🚀 You can run the tests manually with: "
+      print(f"[{self._timestamp()}] 💾 Code saved to: {state.solution_path}")
+      print(f"[{self._timestamp()}] 💾 Tests saved to: {state.test_path}")
+      print(f"\n[{self._timestamp()}] 🚀 You can run the tests manually with: "
             f"pytest {state.test_path}")
     else:
-      print(f"\n❌ Maximum iterations ({state.max_iterations}) reached "
+      print(f"\n[{self._timestamp()}] ❌ Maximum iterations ({state.max_iterations}) reached "
             "without solving the problem.")
-      print(f"📝 Last error: {state.error_message}")
-      print("\n📁 Files generated (may contain partial solutions):")
+      print(f"[{self._timestamp()}] 📝 Last error: {state.error_message}")
+      print(f"\n[{self._timestamp()}] 📁 Files generated (may contain partial solutions):")
       if os.path.exists(state.solution_path):
-        print(f"  - {state.solution_path}")
+        print(f"[{self._timestamp()}]   - {state.solution_path}")
       if os.path.exists(state.test_path):
-        print(f"  - {state.test_path}")
+        print(f"[{self._timestamp()}]   - {state.test_path}")
 
     return state
 
-  def _should_continue(self, state: AgentState) -> str:
-    """Decide whether to continue iterating or finish"""
-    if state.is_solved:
-      return "finish"
-    elif state.current_iteration >= state.max_iterations:
-      return "finish"
-    else:
-      return "continue"
 
   def _clean_code_content(self, content: str) -> str:
     """Clean code content by removing markdown formatting and whitespace"""
@@ -489,11 +580,11 @@ class SupervisorAgent:
     Uses OpenAI via LangChain for faster responses
     """
     try:
-      print(f"🤖 Calling LLM for {operation}...")
+      print(f"[{self._timestamp()}] 🤖 Calling LLM for {operation}...")
       messages = [HumanMessage(content=prompt)]
       response = self.llm.invoke(messages)
       content = response.content
-      print(f"✅ LLM response received for {operation}")
+      print(f"[{self._timestamp()}] ✅ LLM response received for {operation}")
 
       # Ensure we have string content
       if not isinstance(content, str):
@@ -506,43 +597,9 @@ class SupervisorAgent:
       return content
     except Exception as e:
       error_msg = f"Error in {operation}: {str(e)}"
-      print(f"❌ {error_msg}")
+      print(f"[{self._timestamp()}] ❌ {error_msg}")
       return error_msg
 
-  def _call_claude_code(self, operation: str, prompt: str) -> str:
-    """
-    Wrapper for Claude Code SDK calls
-    Uses `claude_code_sdk` (https://github.com/anthropics/claude-code-sdk-python)
-    """
-    try:
-      print(f"🤖 Calling Claude Code for {operation}...")
-
-      # Run the async query function
-      loop = asyncio.new_event_loop()
-      asyncio.set_event_loop(loop)
-
-      try:
-        content = ""
-        async def get_response():
-          nonlocal content
-          async for message in query(prompt=prompt):
-            content += message
-
-        loop.run_until_complete(get_response())
-      finally:
-        loop.close()
-
-      print(f"✅ Claude Code response received for {operation}")
-
-      # Check if response is empty or error-like
-      if not content.strip():
-        return f"Empty response received for {operation}"
-
-      return content
-    except Exception as e:
-      error_msg = f"Error in {operation}: {str(e)}"
-      print(f"❌ {error_msg}")
-      return error_msg
 
   def solve_problem(self, problem_description: str,
                     example_output: Optional[str] = None) -> AgentState:
@@ -557,7 +614,7 @@ class SupervisorAgent:
       messages=[]
     )
 
-    print(f"🚀 Starting problem solving: {problem_description}")
+    print(f"[{self._timestamp()}] 🚀 Starting problem solving: {problem_description}")
     try:
       final_state = self.graph.invoke(initial_state)
       # Ensure we return an AgentState object
@@ -566,7 +623,7 @@ class SupervisorAgent:
         return AgentState(**final_state)
       return final_state
     except Exception as e:
-      print(f"💥 Error during execution: {e}")
+      print(f"[{self._timestamp()}] 💥 Error during execution: {e}")
       # Return the current state with error info
       initial_state.error_message = str(e)
       return initial_state
