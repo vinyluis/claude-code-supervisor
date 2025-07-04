@@ -27,7 +27,7 @@ The supervisor uses LangGraph to orchestrate a workflow with these nodes:
 
 Usage:
   agent = SupervisorAgent('config.json')
-  result = agent.process('Create a sorting function', 'sort([3,1,2]) -> [1,2,3]')
+  result = agent.process('Create a sorting function', example_output='sort([3,1,2]) -> [1,2,3]')
 """
 
 import os
@@ -50,7 +50,7 @@ from claude_code_sdk.types import (
   SystemMessage
 )
 from dotenv import load_dotenv
-from data_manager import DataManager, DataFile
+from .data_manager import DataManager
 
 
 @dataclass
@@ -78,7 +78,6 @@ class AgentState:
   input_data: Any = None
   expected_output: Any = None
   data_format: str = "auto"
-  input_data_files: list[DataFile] = field(default_factory=list)
   output_data: Any = None
   data_manager: DataManager | None = None
 
@@ -122,11 +121,11 @@ class SupervisorAgent:
       >>> agent = SupervisorAgent('supervisor_config.json')
       >>> result = agent.process(
       >>>     'Create a function to calculate fibonacci numbers',
-      >>>     'fib(8) should return 21'
+      >>>     example_output='fib(8) should return 21'
       >>> )
       >>>
       >>> # With custom prompt
-      >>> agent = SupervisorAgent('supervisor_config.json', 
+      >>> agent = SupervisorAgent('supervisor_config.json',
       >>>                        custom_prompt='Use object-oriented design')
       >>> result = agent.process('Create a calculator')
       >>>
@@ -149,7 +148,6 @@ class SupervisorAgent:
     self._load_environment()
     self.config = self._load_config(config_path)
     self.custom_prompt = custom_prompt
-    self.data_manager = DataManager()
     self.llm = self._initialize_llm()
     self._initialize_claude_code()
     self.graph = self._build_graph()
@@ -283,28 +281,30 @@ class SupervisorAgent:
     print(f"\n[{self._timestamp()}] 🚀 Initiating Claude Code session...")
 
     # Handle input data if provided
-    data_files_info = ""
-    if state.input_data is not None:
+    input_data_info = ""
+    if state.input_data is not None and state.data_manager is not None:
       try:
         print(f"[{self._timestamp()}] 📊 Processing input data...")
-        data_file = state.data_manager.serialize_input(
-          state.input_data, 
-          format=state.data_format,
-          name_prefix="input_data"
-        )
-        state.input_data_files.append(data_file)
-        
-        data_files_info = f"""
+
+        # Get data description and format
+        data_format = state.data_format if state.data_format != 'auto' else state.data_manager.infer_format(state.input_data)
+        data_description = state.data_manager.get_data_description(state.input_data, data_format)
+        data_context = state.data_manager.serialize_for_context(state.input_data, data_format)
+
+        # Record the operation
+        state.data_manager.record_operation(state.input_data, data_format, 'input')
+
+        input_data_info = f"""
 
 Input Data Available:
-- File: {data_file.path}
-- Format: {data_file.format}
-- Description: {data_file.description}
+{data_context}
 
-Make sure to read and use this input data in your solution. The file is available in the current working directory as '{os.path.basename(data_file.path)}'.
+Data Description: {data_description}
+
+The input data is available in your solution as a variable. You can access it directly in your code.
 """
-        print(f"[{self._timestamp()}] 📁 Input data saved to: {data_file.path}")
-        
+        print(f"[{self._timestamp()}] 📊 Input data processed: {data_format} format")
+
       except Exception as e:
         print(f"[{self._timestamp()}] ❌ Failed to process input data: {e}")
         state.error_message = f"Failed to process input data: {e}"
@@ -328,7 +328,7 @@ I need you to solve this programming problem step by step. Please:
 Problem: {state.problem_description}
 {f'Expected behavior: {state.example_output}' if state.example_output else ''}
 {expected_output_info}
-{data_files_info}
+{input_data_info}
 
 Requirements:
 - Use Python
@@ -370,15 +370,14 @@ Please start by creating a todo list to plan your approach, then implement the s
       # Build the prompt for continuation or initial request
       if state.current_iteration == 0:
         # First iteration - send the initial problem with data info
-        data_files_info = ""
-        if state.input_data_files:
-          data_file = state.input_data_files[0]  # Use first data file
-          data_files_info = f"""
+        input_data_info = ""
+        if state.input_data and state.data_manager:
+          input_data_info = f"""
 
 Input Data Available:
-- File: {os.path.basename(data_file.path)}
-- Format: {data_file.format}
-- Description: {data_file.description}
+{state.data_manager.serialize_for_context(state.input_data, state.data_format)}
+- Format: {state.data_format}
+- Description: {state.data_manager.get_data_description(state.input_data, state.data_format)}
 
 Make sure to read and use this input data in your solution.
 """
@@ -400,7 +399,7 @@ I need you to solve this programming problem step by step. Please:
 Problem: {state.problem_description}
 {f'Expected behavior: {state.example_output}' if state.example_output else ''}
 {expected_output_info}
-{data_files_info}
+{input_data_info}
 
 Requirements:
 - Use Python
@@ -527,7 +526,7 @@ Please update your todo list and continue with the implementation.
         try:
           # Wait a brief moment for tasks to finish naturally
           loop.run_until_complete(asyncio.sleep(0.1))
-          
+
           # Only cancel tasks that are still pending and not from external libraries
           pending_tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
           if pending_tasks:
@@ -535,11 +534,11 @@ Please update your todo list and continue with the implementation.
             for task in pending_tasks:
               if not task.cancelled():
                 task.cancel()
-            
+
             # Give cancelled tasks time to handle cancellation
             try:
               loop.run_until_complete(asyncio.wait_for(
-                asyncio.gather(*pending_tasks, return_exceptions=True), 
+                asyncio.gather(*pending_tasks, return_exceptions=True),
                 timeout=1.0
               ))
             except asyncio.TimeoutError:
@@ -590,77 +589,75 @@ Please update your todo list and continue with the implementation.
 
     # Run the tests to validate
     state = self._run_tests(state)
-    
+
     # If tests passed and we have input data, try to extract output data
     if state.is_solved and state.input_data is not None:
       state = self._extract_output_data(state)
-    
+
     return state
 
   def _extract_output_data(self, state: AgentState) -> AgentState:
     """Extract output data by running the solution with input data"""
     print(f"\n[{self._timestamp()}] 📤 Extracting output data from solution...")
-    
+
     try:
       # Import the solution module dynamically
       import importlib.util
-      import sys
-      
+
       # Load the solution module
       spec = importlib.util.spec_from_file_location("solution_module", state.solution_path)
       solution_module = importlib.util.module_from_spec(spec)
       spec.loader.exec_module(solution_module)
-      
+
       # Try to find a main function or process function
       possible_functions = ['main', 'process', 'solve', 'run', 'execute']
       main_function = None
-      
+
       for func_name in possible_functions:
         if hasattr(solution_module, func_name):
           main_function = getattr(solution_module, func_name)
           break
-      
+
       if main_function is None:
         # If no standard function found, try to find any callable function
-        functions = [getattr(solution_module, name) for name in dir(solution_module) 
+        functions = [getattr(solution_module, name) for name in dir(solution_module)
                     if callable(getattr(solution_module, name)) and not name.startswith('_')]
         if functions:
           main_function = functions[0]  # Use the first callable function
-      
+
       if main_function is not None:
         print(f"[{self._timestamp()}] 🔧 Found function: {main_function.__name__}")
-        
+
         # Try to call the function with input data
         try:
-          if state.input_data_files:
-            # Pass the input file path as argument
-            data_file = state.input_data_files[0]
-            result = main_function(data_file.path)
+          if state.input_data is not None:
+            # Pass the input data directly as argument
+            result = main_function(state.input_data)
           else:
             # Call without arguments
             result = main_function()
-          
+
           state.output_data = result
           print(f"[{self._timestamp()}] ✅ Output data extracted: {type(result).__name__}")
-          
+
           # Validate against expected output if provided
           if state.expected_output is not None:
             if self._validate_output(result, state.expected_output):
               print(f"[{self._timestamp()}] ✅ Output matches expected format!")
             else:
               print(f"[{self._timestamp()}] ⚠️ Output format doesn't match expected format")
-              
+
         except Exception as e:
           print(f"[{self._timestamp()}] ❌ Failed to execute function: {e}")
           state.error_message = f"Failed to execute solution function: {e}"
-      
+
       else:
         print(f"[{self._timestamp()}] ⚠️ No callable main function found in solution")
-        
+
     except Exception as e:
       print(f"[{self._timestamp()}] ❌ Failed to extract output data: {e}")
       # Don't mark as unsolved, this is optional
-    
+
     return state
 
   def _validate_output(self, actual: Any, expected: Any) -> bool:
@@ -669,7 +666,7 @@ Please update your todo list and continue with the implementation.
       # Check type compatibility
       if type(actual) != type(expected):
         return False
-      
+
       # For collections, check structure
       if isinstance(expected, (list, tuple)):
         if len(actual) != len(expected):
@@ -678,7 +675,7 @@ Please update your todo list and continue with the implementation.
         for a, e in zip(actual, expected):
           if type(a) != type(e):
             return False
-      
+
       elif isinstance(expected, dict):
         if set(actual.keys()) != set(expected.keys()):
           return False
@@ -686,9 +683,9 @@ Please update your todo list and continue with the implementation.
         for key in expected:
           if type(actual[key]) != type(expected[key]):
             return False
-      
+
       return True
-      
+
     except Exception:
       return False
 
@@ -925,12 +922,12 @@ Please update your todo list and continue working on the solution, addressing th
             f"{state.current_iteration} iterations!")
       print(f"[{self._timestamp()}] 💾 Code saved to: {state.solution_path}")
       print(f"[{self._timestamp()}] 💾 Tests saved to: {state.test_path}")
-      
+
       if state.output_data is not None:
         print(f"[{self._timestamp()}] 📊 Output data: {type(state.output_data).__name__}")
         if hasattr(state.output_data, '__len__') and len(state.output_data) < 20:
           print(f"[{self._timestamp()}] 📊 Result: {state.output_data}")
-      
+
       print(f"\n[{self._timestamp()}] 🚀 You can run the tests manually with: "
             f"pytest {state.test_path}")
     else:
@@ -943,32 +940,34 @@ Please update your todo list and continue working on the solution, addressing th
       if os.path.exists(state.test_path):
         print(f"[{self._timestamp()}]   - {state.test_path}")
 
-    # Clean up temporary data files
-    if state.data_manager:
-      cleaned_count = state.data_manager.cleanup()
-      if cleaned_count > 0:
-        print(f"[{self._timestamp()}] 🧹 Cleaned up {cleaned_count} temporary data files")
+    # No cleanup needed - all data operations are in-memory only
 
     return state
 
-  def process(self, problem_description: str,
+  def process(self, problem_description: str, *,
               input_data: Any = None,
               expected_output: Any = None,
               data_format: str = "auto",
               example_output: str | None = None) -> AgentState:
     """
     Main method to process a problem with optional input/output data.
-    
+
     Args:
         problem_description: Description of the problem to solve
         input_data: Input data for Claude Code to work with (optional)
         expected_output: Expected output for validation (optional)
         data_format: Format hint for data handling ('auto', 'csv', 'json', etc.)
         example_output: Text description of expected output (optional)
-        
+
     Returns:
         AgentState with results and any output data
     """
+    # Only create DataManager if I/O data is provided
+    data_manager = None
+    if input_data is not None or expected_output is not None:
+      data_manager = DataManager()
+      print(f"[{self._timestamp()}] 📁 DataManager created for I/O operations")
+
     initial_state = AgentState(
       problem_description=problem_description,
       example_output=example_output,
@@ -979,20 +978,22 @@ Please update your todo list and continue working on the solution, addressing th
       solution_path=self.config["agent"]["solution_filename"],
       test_path=self.config["agent"]["test_filename"],
       config=self.config,
-      data_manager=self.data_manager
+      data_manager=data_manager
     )
 
     print(f"[{self._timestamp()}] 🚀 Starting problem solving: {problem_description}")
     try:
       final_state = self.graph.invoke(initial_state)
+
       # Ensure we return an AgentState object
       if isinstance(final_state, dict):
         # Convert dict back to AgentState if needed
-        return AgentState(**final_state)
+        final_state = AgentState(**final_state)
+
       return final_state
+
     except Exception as e:
       print(f"[{self._timestamp()}] 💥 Error during execution: {e}")
-      # Return the current state with error info
       initial_state.error_message = str(e)
       return initial_state
 
@@ -1019,7 +1020,7 @@ Please update your todo list and continue working on the solution, addressing th
     problem_description = sys.argv[1]
     example_output = None
     custom_prompt = None
-    
+
     # Parse remaining arguments
     for i in range(2, len(sys.argv)):
       arg = sys.argv[i]
@@ -1058,7 +1059,7 @@ Please update your todo list and continue working on the solution, addressing th
       print("\n" + "=" * 60)
 
       agent = cls(custom_prompt=custom_prompt)
-      final_state = agent.process(problem_description, example_output)
+      final_state = agent.process(problem_description, example_output=example_output)
 
       print("\n" + "=" * 60)
       if final_state.is_solved:

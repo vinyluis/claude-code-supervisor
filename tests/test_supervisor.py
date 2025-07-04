@@ -10,8 +10,8 @@ import pytest
 from unittest.mock import Mock, patch, mock_open
 
 # Import the classes to test
-from supervisor import SupervisorAgent, AgentState
-from data_manager import DataManager, DataFile
+from claude_code_supervisor import SupervisorAgent, AgentState
+from claude_code_supervisor.data_manager import DataManager
 
 
 class TestAgentState:
@@ -43,7 +43,7 @@ class TestAgentState:
     assert state.input_data is None
     assert state.expected_output is None
     assert state.data_format == "auto"
-    assert state.input_data_files == []
+    # Removed input_data_files field in new in-memory approach
     assert state.output_data is None
     assert state.data_manager is None
 
@@ -152,13 +152,13 @@ class TestSupervisorAgent:
   def test_timestamp_format(self) -> None:
     """Test timestamp method returns correct format"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    
+
     timestamp = agent._timestamp()
     # Should be in HH:MM:SS format
     import re
     assert re.match(r'^\d{2}:\d{2}:\d{2}$', timestamp)
 
-  @patch('supervisor.ChatOpenAI')
+  @patch('claude_code_supervisor.supervisor.ChatOpenAI')
   def test_initialize_llm(self, mock_chat_openai) -> None:
     """Test LLM initialization"""
     mock_config = {
@@ -175,7 +175,7 @@ class TestSupervisorAgent:
       temperature=0.1
     )
 
-  @patch('supervisor.ChatOpenAI')
+  @patch('claude_code_supervisor.supervisor.ChatOpenAI')
   def test_call_llm_success(self, mock_chat_openai) -> None:
     """Test successful LLM call"""
     # Setup mock response
@@ -194,7 +194,7 @@ class TestSupervisorAgent:
     assert result == "Generated guidance content"
     mock_llm.invoke.assert_called_once()
 
-  @patch('supervisor.ChatOpenAI')
+  @patch('claude_code_supervisor.supervisor.ChatOpenAI')
   def test_call_llm_exception(self, mock_chat_openai) -> None:
     """Test LLM call with exception"""
     mock_llm = Mock()
@@ -208,7 +208,7 @@ class TestSupervisorAgent:
 
     assert "Error in test_operation: API Error" in result
 
-  @patch('supervisor.os.getenv')
+  @patch('claude_code_supervisor.supervisor.os.getenv')
   def test_initialize_claude_code_anthropic(self, mock_getenv) -> None:
     """Test Claude Code initialization with Anthropic provider"""
     mock_getenv.return_value = "test-api-key"
@@ -241,7 +241,7 @@ class TestSupervisorAgent:
     # Verify default system prompt
     assert "You are an expert Python developer" in agent.base_claude_options.system_prompt
 
-  @patch('supervisor.os.environ')
+  @patch('claude_code_supervisor.supervisor.os.environ')
   def test_initialize_claude_code_bedrock(self, mock_environ) -> None:
     """Test Claude Code initialization with Bedrock provider"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
@@ -257,7 +257,7 @@ class TestSupervisorAgent:
 
     mock_environ.__setitem__.assert_called_with("CLAUDE_CODE_USE_BEDROCK", "1")
 
-  @patch('supervisor.os.getenv')
+  @patch('claude_code_supervisor.supervisor.os.getenv')
   def test_initialize_claude_code_with_custom_prompt(self, mock_getenv) -> None:
     """Test Claude Code initialization with custom prompt"""
     mock_getenv.return_value = "test-api-key"
@@ -284,8 +284,8 @@ class TestSupervisorAgent:
     assert "Additional instructions:" in agent.base_claude_options.system_prompt
 
 
-  @patch('supervisor.load_dotenv')
-  @patch('supervisor.Path')
+  @patch('claude_code_supervisor.supervisor.load_dotenv')
+  @patch('claude_code_supervisor.supervisor.Path')
   def test_load_environment_file_exists(self, mock_path, mock_load_dotenv) -> None:
     """Test loading environment when .env file exists"""
     mock_env_path = Mock()
@@ -297,8 +297,8 @@ class TestSupervisorAgent:
 
     mock_load_dotenv.assert_called_once_with(mock_env_path)
 
-  @patch('supervisor.load_dotenv')
-  @patch('supervisor.Path')
+  @patch('claude_code_supervisor.supervisor.load_dotenv')
+  @patch('claude_code_supervisor.supervisor.Path')
   def test_load_environment_file_missing(self, mock_path, mock_load_dotenv) -> None:
     """Test loading environment when .env file is missing"""
     mock_env_path = Mock()
@@ -578,7 +578,7 @@ class TestSupervisorAgent:
 class TestSupervisorAgentIntegration:
   """Integration tests for SupervisorAgent workflow"""
 
-  @patch('supervisor.StateGraph')
+  @patch('claude_code_supervisor.supervisor.StateGraph')
   def test_process_success_workflow(self, mock_state_graph) -> None:
     """Test complete successful problem-solving workflow"""
     # Mock graph workflow
@@ -615,12 +615,12 @@ class TestSupervisorAgentIntegration:
 
       agent = SupervisorAgent(config_path)
       result = agent.process("Create a hello function",
-                             "hello() = 'world'")
+                             example_output="hello() = 'world'")
 
       assert result.is_solved is True
       assert result.current_iteration >= 0
 
-  @patch('supervisor.StateGraph')
+  @patch('claude_code_supervisor.supervisor.StateGraph')
   def test_process_exception_handling(self, mock_state_graph) -> None:
     """Test exception handling in process"""
     # Mock graph workflow that raises exception
@@ -650,7 +650,7 @@ class TestSupervisorAgentIntegration:
 
       assert "Graph execution error" in result.error_message
 
-  @patch('supervisor.StateGraph')
+  @patch('claude_code_supervisor.supervisor.StateGraph')
   def test_process_with_custom_prompt(self, mock_state_graph) -> None:
     """Test process method with custom prompt"""
     # Mock graph workflow
@@ -736,7 +736,7 @@ class TestSupervisorAgentIntegration:
       assert hasattr(agent, 'data_manager')
       assert isinstance(agent.data_manager, DataManager)
 
-  @patch('supervisor.StateGraph')
+  @patch('claude_code_supervisor.supervisor.StateGraph')
   def test_process_with_input_data(self, mock_state_graph) -> None:
     """Test process method with input data"""
     # Mock graph workflow
