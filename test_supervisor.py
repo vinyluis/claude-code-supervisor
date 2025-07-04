@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch, mock_open
 
 # Import the classes to test
 from supervisor import SupervisorAgent, AgentState
-from data_manager import DataManager, DataFile
+from data_manager import DataManager
 
 
 class TestAgentState:
@@ -43,7 +43,7 @@ class TestAgentState:
     assert state.input_data is None
     assert state.expected_output is None
     assert state.data_format == "auto"
-    assert state.input_data_files == []
+    # Removed input_data_files field in new in-memory approach
     assert state.output_data is None
     assert state.data_manager is None
 
@@ -615,7 +615,7 @@ class TestSupervisorAgentIntegration:
 
       agent = SupervisorAgent(config_path)
       result = agent.process("Create a hello function",
-                             "hello() = 'world'")
+                             example_output="hello() = 'world'")
 
       assert result.is_solved is True
       assert result.current_iteration >= 0

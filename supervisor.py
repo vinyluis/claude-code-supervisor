@@ -27,7 +27,7 @@ The supervisor uses LangGraph to orchestrate a workflow with these nodes:
 
 Usage:
   agent = SupervisorAgent('config.json')
-  result = agent.process('Create a sorting function', 'sort([3,1,2]) -> [1,2,3]')
+  result = agent.process('Create a sorting function', example_output='sort([3,1,2]) -> [1,2,3]')
 """
 
 import os
@@ -50,7 +50,7 @@ from claude_code_sdk.types import (
   SystemMessage
 )
 from dotenv import load_dotenv
-from data_manager import DataManager, DataFile
+from data_manager import DataManager
 
 
 @dataclass
@@ -78,7 +78,6 @@ class AgentState:
   input_data: Any = None
   expected_output: Any = None
   data_format: str = "auto"
-  input_data_files: list[DataFile] = field(default_factory=list)
   output_data: Any = None
   data_manager: DataManager | None = None
 
@@ -122,7 +121,7 @@ class SupervisorAgent:
       >>> agent = SupervisorAgent('supervisor_config.json')
       >>> result = agent.process(
       >>>     'Create a function to calculate fibonacci numbers',
-      >>>     'fib(8) should return 21'
+      >>>     example_output='fib(8) should return 21'
       >>> )
       >>>
       >>> # With custom prompt
@@ -149,7 +148,6 @@ class SupervisorAgent:
     self._load_environment()
     self.config = self._load_config(config_path)
     self.custom_prompt = custom_prompt
-    self.data_manager = DataManager()
     self.llm = self._initialize_llm()
     self._initialize_claude_code()
     self.graph = self._build_graph()
@@ -283,27 +281,29 @@ class SupervisorAgent:
     print(f"\n[{self._timestamp()}] 🚀 Initiating Claude Code session...")
 
     # Handle input data if provided
-    data_files_info = ""
-    if state.input_data is not None:
+    input_data_info = ""
+    if state.input_data is not None and state.data_manager is not None:
       try:
         print(f"[{self._timestamp()}] 📊 Processing input data...")
-        data_file = state.data_manager.serialize_input(
-          state.input_data, 
-          format=state.data_format,
-          name_prefix="input_data"
-        )
-        state.input_data_files.append(data_file)
         
-        data_files_info = f"""
+        # Get data description and format
+        data_format = state.data_format if state.data_format != 'auto' else state.data_manager.infer_format(state.input_data)
+        data_description = state.data_manager.get_data_description(state.input_data, data_format)
+        data_context = state.data_manager.serialize_for_context(state.input_data, data_format)
+        
+        # Record the operation
+        state.data_manager.record_operation(state.input_data, data_format, 'input')
+        
+        input_data_info = f"""
 
 Input Data Available:
-- File: {data_file.path}
-- Format: {data_file.format}
-- Description: {data_file.description}
+{data_context}
 
-Make sure to read and use this input data in your solution. The file is available in the current working directory as '{os.path.basename(data_file.path)}'.
+Data Description: {data_description}
+
+The input data is available in your solution as a variable. You can access it directly in your code.
 """
-        print(f"[{self._timestamp()}] 📁 Input data saved to: {data_file.path}")
+        print(f"[{self._timestamp()}] 📊 Input data processed: {data_format} format")
         
       except Exception as e:
         print(f"[{self._timestamp()}] ❌ Failed to process input data: {e}")
@@ -328,7 +328,7 @@ I need you to solve this programming problem step by step. Please:
 Problem: {state.problem_description}
 {f'Expected behavior: {state.example_output}' if state.example_output else ''}
 {expected_output_info}
-{data_files_info}
+{input_data_info}
 
 Requirements:
 - Use Python
@@ -370,15 +370,14 @@ Please start by creating a todo list to plan your approach, then implement the s
       # Build the prompt for continuation or initial request
       if state.current_iteration == 0:
         # First iteration - send the initial problem with data info
-        data_files_info = ""
-        if state.input_data_files:
-          data_file = state.input_data_files[0]  # Use first data file
-          data_files_info = f"""
+        input_data_info = ""
+        if state.input_data and state.data_manager:
+          input_data_info = f"""
 
 Input Data Available:
-- File: {os.path.basename(data_file.path)}
-- Format: {data_file.format}
-- Description: {data_file.description}
+{state.data_manager.serialize_for_context(state.input_data, state.data_format)}
+- Format: {state.data_format}
+- Description: {state.data_manager.get_data_description(state.input_data, state.data_format)}
 
 Make sure to read and use this input data in your solution.
 """
@@ -400,7 +399,7 @@ I need you to solve this programming problem step by step. Please:
 Problem: {state.problem_description}
 {f'Expected behavior: {state.example_output}' if state.example_output else ''}
 {expected_output_info}
-{data_files_info}
+{input_data_info}
 
 Requirements:
 - Use Python
@@ -632,10 +631,9 @@ Please update your todo list and continue with the implementation.
         
         # Try to call the function with input data
         try:
-          if state.input_data_files:
-            # Pass the input file path as argument
-            data_file = state.input_data_files[0]
-            result = main_function(data_file.path)
+          if state.input_data is not None:
+            # Pass the input data directly as argument
+            result = main_function(state.input_data)
           else:
             # Call without arguments
             result = main_function()
@@ -943,15 +941,11 @@ Please update your todo list and continue working on the solution, addressing th
       if os.path.exists(state.test_path):
         print(f"[{self._timestamp()}]   - {state.test_path}")
 
-    # Clean up temporary data files
-    if state.data_manager:
-      cleaned_count = state.data_manager.cleanup()
-      if cleaned_count > 0:
-        print(f"[{self._timestamp()}] 🧹 Cleaned up {cleaned_count} temporary data files")
+    # No cleanup needed - all data operations are in-memory only
 
     return state
 
-  def process(self, problem_description: str,
+  def process(self, problem_description: str, *,
               input_data: Any = None,
               expected_output: Any = None,
               data_format: str = "auto",
@@ -969,6 +963,12 @@ Please update your todo list and continue working on the solution, addressing th
     Returns:
         AgentState with results and any output data
     """
+    # Only create DataManager if I/O data is provided
+    data_manager = None
+    if input_data is not None or expected_output is not None:
+      data_manager = DataManager()
+      print(f"[{self._timestamp()}] 📁 DataManager created for I/O operations")
+    
     initial_state = AgentState(
       problem_description=problem_description,
       example_output=example_output,
@@ -979,19 +979,27 @@ Please update your todo list and continue working on the solution, addressing th
       solution_path=self.config["agent"]["solution_filename"],
       test_path=self.config["agent"]["test_filename"],
       config=self.config,
-      data_manager=self.data_manager
+      data_manager=data_manager
     )
 
     print(f"[{self._timestamp()}] 🚀 Starting problem solving: {problem_description}")
     try:
       final_state = self.graph.invoke(initial_state)
+      
       # Ensure we return an AgentState object
       if isinstance(final_state, dict):
         # Convert dict back to AgentState if needed
-        return AgentState(**final_state)
+        final_state = AgentState(**final_state)
+      
+      # No cleanup needed - all data operations are in-memory only
+      
       return final_state
+      
     except Exception as e:
       print(f"[{self._timestamp()}] 💥 Error during execution: {e}")
+      
+      # No cleanup needed - all data operations are in-memory only
+      
       # Return the current state with error info
       initial_state.error_message = str(e)
       return initial_state
@@ -1058,7 +1066,7 @@ Please update your todo list and continue working on the solution, addressing th
       print("\n" + "=" * 60)
 
       agent = cls(custom_prompt=custom_prompt)
-      final_state = agent.process(problem_description, example_output)
+      final_state = agent.process(problem_description, example_output=example_output)
 
       print("\n" + "=" * 60)
       if final_state.is_solved:
