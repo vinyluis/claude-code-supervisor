@@ -43,20 +43,24 @@ pip install -e .
 2. **API Key** (choose one):
    ```bash
    # Anthropic (default)
-   export ANTHROPIC_API_KEY="your-anthropic-api-key"
+   export ANTHROPIC_API_KEY=<YOUR_ANTHROPIC_API_KEY>
    
    # AWS Bedrock
-   export CLAUDE_CODE_USE_BEDROCK=1
-   export AWS_PROFILE="your-aws-profile"
-   
-   # Google Vertex AI
-   export CLAUDE_CODE_USE_VERTEX=1
-   export GOOGLE_APPLICATION_CREDENTIALS="path/to/credentials.json"
+   export AWS_ACCESS_KEY_ID=<YOUR_AWS_ACCESS_KEY_ID>
+   export AWS_SECRET_ACCESS_KEY=<YOUR_AWS_SECRET_ACCESS_KEY>
+   export AWS_REGION=<AWS_REGION>
+
    ```
 
-3. **OpenAI API Key** (for LLM guidance):
+3. **LLM API Key** (for guidance, choose one):
    ```bash
+   # OpenAI (default)
    export OPENAI_API_KEY="your-openai-api-key"
+   # Configure supervisor_config.json with "provider": "openai"
+   
+   # AWS Bedrock (for guidance LLM)
+   # Will use the access keys above
+   # Configure supervisor_config.json with "provider": "bedrock"
    ```
 
 ## 🚀 Quick Start
@@ -137,11 +141,13 @@ Check out the [examples directory](examples/) for detailed usage examples:
 
 Create a `supervisor_config.json` file to customize behavior:
 
+### OpenAI Configuration (default)
 ```json
 {
   "model": {
     "name": "gpt-4o",
-    "temperature": 0.1
+    "temperature": 0.1,
+    "provider": "openai"
   },
   "agent": {
     "max_iterations": 5,
@@ -155,6 +161,35 @@ Create a `supervisor_config.json` file to customize behavior:
   }
 }
 ```
+
+### AWS Bedrock Configuration
+```json
+{
+  "model": {
+    "name": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "temperature": 0.1,
+    "provider": "bedrock",
+    "region": "us-east-1"
+  },
+  "agent": {
+    "max_iterations": 5,
+    "solution_filename": "solution.py",
+    "test_filename": "test_solution.py"
+  },
+  "claude_code": {
+    "use_bedrock": true,
+    "max_turns": 20,
+    "max_thinking_tokens": 8000
+  }
+}
+```
+
+### Configuration Options
+
+- **model.provider**: `"openai"` or `"bedrock"`
+- **model.name**: Model identifier (e.g., `"gpt-4o"` for OpenAI, `"anthropic.claude-3-5-sonnet-20241022-v2:0"` for Bedrock)
+- **model.region**: AWS region for Bedrock (e.g., `"us-east-1"`)
+- **claude_code.use_bedrock**: Set to `true` to use AWS Bedrock for Claude Code itself, or `false` to use Anthropic API
 
 ## 🧪 Testing
 
