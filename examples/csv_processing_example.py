@@ -11,7 +11,7 @@ import os
 # Add parent directory to path to import supervisor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from supervisor import SupervisorAgent
+from claude_code_supervisor import SupervisorAgent
 
 
 def create_sample_data():

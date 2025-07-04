@@ -7,7 +7,7 @@ format detection, and context generation.
 
 import pytest
 
-from data_manager import DataManager, DataInfo
+from claude_code_supervisor.data_manager import DataManager, DataInfo
 
 
 class TestDataInfo:
