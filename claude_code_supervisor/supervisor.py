@@ -26,7 +26,7 @@ The supervisor uses LangGraph to orchestrate a workflow with these nodes:
 5. finalize: Complete the session and report results
 
 Usage:
-  agent = SupervisorAgent('config.json')
+  agent = SupervisorAgent()
   result = agent.process('Create a sorting function', example_output='sort([3,1,2]) -> [1,2,3]')
 """
 
@@ -34,6 +34,7 @@ import os
 import sys
 import subprocess
 import asyncio
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 import time
@@ -84,6 +85,9 @@ class AgentState:
 
   def __post_init__(self) -> None:
     self.last_activity_time = time.time()
+
+  def to_dict(self) -> dict:
+    return dataclasses.asdict(self)
 
 
 class SupervisorAgent:
@@ -1076,7 +1080,3 @@ Please update your todo list and continue working on the solution, addressing th
       import traceback
       traceback.print_exc()
       sys.exit(1)
-
-
-if __name__ == '__main__':
-  SupervisorAgent.cli_run()
