@@ -1,0 +1,161 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claude-code-supervisor"
+dynamic = ["version"]
+description = "An intelligent wrapper around Claude Code SDK for automated problem-solving"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Vinícius Trevisan", email = "vinicius@viniciustrevisan.com"}
+]
+maintainers = [
+    {name = "Vinícius Trevisan", email = "vinicius@viniciustrevisan.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Testing",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+keywords = ["claude", "code-generation", "ai", "automation", "testing", "development"]
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.20.0",
+    "pandas>=1.3.0",
+    "scikit-learn>=1.0.0",
+    "langchain>=0.3.0",
+    "langchain-aws>=0.2.0",
+    "langchain-openai>=0.3.0",
+    "langgraph>=0.4.0",
+    "claude-code-sdk>=0.0.14",
+    "pytest>=6.0.0",
+    "python-dotenv>=0.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0.0",
+    "pytest-cov>=2.12.0",
+    "pytest-asyncio>=0.18.0",
+    "black>=22.0.0",
+    "isort>=5.10.0",
+    "flake8>=4.0.0",
+    "mypy>=0.950",
+    "pre-commit>=2.17.0",
+    "tox>=3.24.0",
+]
+docs = [
+    "sphinx>=4.0.0",
+    "sphinx-rtd-theme>=1.0.0",
+    "myst-parser>=0.17.0",
+]
+aws = [
+    "boto3>=1.26.0",
+    "botocore>=1.29.0",
+]
+
+
+[project.urls]
+Homepage = "https://github.com/vinyluis/claude-code-supervisor"
+Documentation = "https://github.com/vinyluis/claude-code-supervisor#readme"
+Repository = "https://github.com/vinyluis/claude-code-supervisor.git"
+Issues = "https://github.com/vinyluis/claude-code-supervisor/issues"
+Changelog = "https://github.com/vinyluis/claude-code-supervisor/blob/main/CHANGELOG.md"
+
+[project.scripts]
+claude-supervisor = "claude_code_supervisor.supervisor:SupervisorAgent.cli_run"
+
+[tool.setuptools.dynamic]
+version = {attr = "claude_code_supervisor.__version__.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["claude_code_supervisor*"]
+
+[tool.setuptools.package-data]
+claude_code_supervisor = ["*.json", "*.yaml", "*.yml"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+
+[tool.coverage.run]
+source = ["claude_code_supervisor"]
+omit = [
+    "*/tests/*",
+    "*/examples/*",
+    "*/__version__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["claude_code_supervisor"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "langchain.*",
+    "langgraph.*",
+    "claude_code_sdk.*",
+]
+ignore_missing_imports = true

@@ -1,81 +1,141 @@
 # Claude Code Supervisor
 
-An intelligent supervisor agent that wraps Claude Code SDK to provide automated problem-solving with session management, progress monitoring, and intelligent feedback loops.
+[![PyPI version](https://badge.fury.io/py/claude-code-supervisor.svg)](https://badge.fury.io/py/claude-code-supervisor)
+[![Python Support](https://img.shields.io/pypi/pyversions/claude-code-supervisor.svg)](https://pypi.org/project/claude-code-supervisor/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Overview
+An intelligent wrapper around Claude Code SDK that provides automated problem-solving capabilities with session management, progress monitoring, and intelligent feedback loops.
 
-This project implements a supervisor that works as an intelligent wrapper around Claude Code, enabling automated programming problem solving by:
+## 🚀 Features
 
-1. **Initiating Claude Code sessions** with structured problem descriptions
-2. **Monitoring real-time progress** via SDK message streaming and todo tracking
-3. **Validating solutions** through automated test execution
-4. **Providing intelligent guidance** when Claude encounters issues
-5. **Managing session continuity** across multiple iterations
+- **Automated Problem Solving**: Describes problems to Claude Code and gets complete solutions
+- **Session Management**: Maintains context across multiple iterations
+- **Progress Monitoring**: Tracks Claude's progress via todo list updates and output analysis
+- **Intelligent Feedback**: Provides guidance when Claude encounters issues
+- **Data I/O Support**: Handles various data formats (lists, dicts, CSV, DataFrames, etc.)
+- **Custom Prompts**: Guide implementation toward specific patterns or requirements
+- **Test Automation**: Automatically generates and runs tests for solutions
+- **Multiple Providers**: Support for Anthropic, AWS Bedrock, and Google Vertex AI
 
-The key innovation is treating Claude Code as a collaborative coding assistant that can plan its own work using todo lists, rather than a simple LLM that needs pre-planning.
+## 📦 Installation
 
-## Architecture
+### From PyPI (recommended)
 
-The supervisor uses LangGraph to orchestrate this workflow:
-
-- **initiate_claude**: Start Claude Code session with problem description
-- **monitor_claude**: Track progress via SDK message streaming and todo updates  
-- **validate_solution**: Run tests on generated files to verify correctness
-- **provide_guidance**: Analyze failures and generate actionable feedback using LLM
-- **finalize**: Complete the session and report results
-
-## Features
-
-- **Claude Code SDK Integration** - Direct integration with Claude Code as subprocess
-- **Session-based Continuity** - Resume sessions across iterations for complex problems
-- **Real-time Progress Monitoring** - Track Claude's todo lists and tool usage
-- **LLM-powered Guidance** - Intelligent error analysis and feedback generation
-- **Configurable Timeouts** - Prevent infinite loops with session and activity timeouts
-- **Multi-provider Support** - Anthropic API, Amazon Bedrock, Google Vertex AI
-- **Comprehensive Testing** - Automated pytest execution with detailed reporting
-- **Timestamped Logging** - Detailed progress tracking with timestamps
-
-## Prerequisites
-
-- Python 3.8+
-- Node.js (for Claude Code CLI)
-- Anthropic API key (or Bedrock/Vertex access)
-- Required Python dependencies
-
-## Installation
-
-1. Clone the repository:
 ```bash
-git clone <repository-url>
+pip install claude-code-supervisor
+```
+
+### From Source
+
+```bash
+git clone https://github.com/vinyluis/claude-code-supervisor.git
 cd claude-code-supervisor
+pip install -e .
 ```
 
-2. Install Claude Code CLI:
+## 🛠️ Prerequisites
+
+1. **Claude Code CLI**:
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   ```
+
+2. **API Key** (choose one):
+   ```bash
+   # Anthropic (default)
+   export ANTHROPIC_API_KEY="your-anthropic-api-key"
+   
+   # AWS Bedrock
+   export CLAUDE_CODE_USE_BEDROCK=1
+   export AWS_PROFILE="your-aws-profile"
+   
+   # Google Vertex AI
+   export CLAUDE_CODE_USE_VERTEX=1
+   export GOOGLE_APPLICATION_CREDENTIALS="path/to/credentials.json"
+   ```
+
+3. **OpenAI API Key** (for LLM guidance):
+   ```bash
+   export OPENAI_API_KEY="your-openai-api-key"
+   ```
+
+## 🚀 Quick Start
+
+### Basic Usage
+
+```python
+from claude_code_supervisor import SupervisorAgent
+
+# Initialize the agent
+agent = SupervisorAgent()
+
+# Solve a problem
+result = agent.process(
+    "Create a function to calculate fibonacci numbers",
+    example_output="fib(8) should return 21"
+)
+
+if result.is_solved:
+    print(f"Solution: {result.solution_path}")
+    print(f"Tests: {result.test_path}")
+```
+
+### With Input/Output Data
+
+```python
+# Process data with input/output examples
+result = agent.process(
+    "Sort this list in ascending order",
+    input_data=[64, 34, 25, 12, 22, 11, 90, 5],
+    expected_output=[5, 11, 12, 22, 25, 34, 64, 90],
+    data_format="list"
+)
+```
+
+### With Custom Prompts
+
+```python
+# Guide implementation style
+agent = SupervisorAgent(
+    custom_prompt="Use object-oriented programming with SOLID principles"
+)
+
+result = agent.process("Create a calculator with basic operations")
+```
+
+### Command Line Interface
+
 ```bash
-npm install -g @anthropic-ai/claude-code
+# Basic usage
+claude-supervisor "Create a hello world function"
+
+# With custom prompt
+claude-supervisor "Create a web scraper" --prompt="Use requests and BeautifulSoup"
 ```
 
-3. Install Python dependencies:
-```bash
-pip install langgraph langchain langchain-openai claude-code-sdk python-dotenv pytest
-```
+## 📊 Data Format Support
 
-4. Set up environment variables:
-```bash
-# For Anthropic API (default)
-export ANTHROPIC_API_KEY='your-anthropic-key'
-export OPENAI_API_KEY='your-openai-key'  # For guidance analysis
+The supervisor supports various data formats:
 
-# For Amazon Bedrock (optional)
-export CLAUDE_CODE_USE_BEDROCK=1
+- **Lists**: `[1, 2, 3, 4]`
+- **Dictionaries**: `{"name": "Alice", "age": 30}`
+- **Pandas DataFrames**: For data analysis tasks
+- **NumPy Arrays**: For numerical computations
+- **Strings**: Text processing tasks
+- **CSV Data**: Business logic and data processing
 
-# For Google Vertex AI (optional)  
-export CLAUDE_CODE_USE_VERTEX=1
-```
+## 🎯 Examples
 
-## Configuration
+Check out the [examples directory](examples/) for detailed usage examples:
 
-Create `supervisor_config.json` to customize behavior:
+- **Basic Usage**: Simple problem solving without I/O
+- **Data Processing**: Working with lists, dictionaries, and complex data
+- **Custom Prompts**: Guiding implementation toward specific patterns
+- **Advanced Scenarios**: Real-world data processing examples
+
+## 🔧 Configuration
+
+Create a `supervisor_config.json` file to customize behavior:
 
 ```json
 {
@@ -86,149 +146,60 @@ Create `supervisor_config.json` to customize behavior:
   "agent": {
     "max_iterations": 5,
     "solution_filename": "solution.py",
-    "test_filename": "test_solution.py",
-    "test_timeout": 30
+    "test_filename": "test_solution.py"
   },
   "claude_code": {
     "provider": "anthropic",
-    "use_bedrock": false,
-    "session_timeout_seconds": 300,
-    "activity_timeout_seconds": 180,
     "max_turns": 20,
     "max_thinking_tokens": 8000
   }
 }
 ```
 
-## Usage
-
-### Basic Usage
-```bash
-python supervisor.py "Create a function to sort a list of numbers"
-```
-
-### With Example Output
-```bash
-python supervisor.py "Calculate fibonacci numbers" "fib(8) = 21"
-```
-
-### Programmatic Usage
-```python
-from supervisor import SupervisorAgent
-
-agent = SupervisorAgent('supervisor_config.json')
-result = agent.solve_problem(
-    'Create a function to calculate fibonacci numbers',
-    'fib(8) should return 21'
-)
-
-if result.is_solved:
-    print(f'Solution: {result.solution_path}')
-    print(f'Tests: {result.test_path}')
-    print(f'Completed in {result.current_iteration} iterations')
-else:
-    print(f'Failed: {result.error_message}')
-```
-
-## Workflow Details
-
-### 1. Session Initiation
-- Claude Code receives structured problem description
-- Supervisor monitors SDK message stream in real-time
-- Session ID tracked for continuity
-
-### 2. Progress Monitoring  
-- Real-time tracking of Claude's todo list updates
-- Tool usage monitoring (Read, Write, Bash, etc.)
-- Activity timeout detection to prevent stalls
-
-### 3. Solution Validation
-- Automatic detection of generated solution and test files
-- Pytest execution with comprehensive error reporting
-- Syntax validation before test execution
-
-### 4. Intelligent Guidance
-- LLM analysis of Claude's errors and outputs
-- Context-aware feedback generation
-- Guidance stored in message buffer for next iteration
-
-### 5. Session Continuity
-- Resume capability using Claude Code SDK session IDs
-- Iteration tracking across multiple attempts
-- Progressive guidance accumulation
-
-## Output Files
-
-The supervisor generates:
-- `solution.py` - Claude's generated code solution
-- `test_solution.py` - Claude's comprehensive test cases
-- Console logs with timestamped progress tracking
-
-## Key Components
-
-### AgentState
-Tracks supervisor state including:
-- Problem description and requirements
-- Claude session information and activity
-- Todo list progress and output logs
-- Guidance messages and error tracking
-- Iteration count and solution status
-
-### SupervisorAgent
-Main orchestrator providing:
-- Configuration management from JSON
-- LangGraph workflow coordination
-- Claude Code SDK integration
-- LLM-powered guidance analysis
-- Session and timeout management
-
-## Error Handling
-
-The supervisor handles:
-- Claude Code session failures and timeouts
-- Syntax errors in generated code
-- Test execution failures and timeouts
-- API communication issues
-- File I/O and path resolution errors
-- SDK integration problems
-
-## Testing
+## 🧪 Testing
 
 Run the test suite:
+
 ```bash
-python -m pytest test_supervisor.py -v
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=claude_code_supervisor
+
+# Run specific test categories
+pytest -m "unit"
+pytest -m "integration"
 ```
 
-Tests cover:
-- AgentState dataclass functionality
-- Configuration loading and validation
-- LLM integration and guidance generation
-- Claude Code SDK integration
-- Workflow orchestration
-- Error handling scenarios
+## 🤝 Contributing
 
-## Development
-
-### Dependencies
-- **Core**: langgraph, langchain-openai, claude-code-sdk
-- **Environment**: python-dotenv
-- **Testing**: pytest
-
-### Key Files
-- `supervisor.py` - Main supervisor implementation
-- `supervisor_config.json` - Configuration file
-- `test_supervisor.py` - Comprehensive test suite
-- `CLAUDE.md` - Claude Code SDK usage instructions
-
-## Contributing
+We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
 
 1. Fork the repository
-2. Create a feature branch
-3. Add comprehensive tests for new functionality
-4. Ensure all tests pass: `pytest test_supervisor.py -v`
-5. Follow code style guidelines in `CLAUDE.md`
-6. Submit a pull request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-## License
+## 📝 License
 
-[Add your license information here]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [Claude Code SDK](https://github.com/anthropics/claude-code-sdk) for the core Claude Code integration
+- [LangGraph](https://github.com/langchain-ai/langgraph) for workflow orchestration
+- [LangChain](https://github.com/langchain-ai/langchain) for LLM integrations
+
+## 📚 Documentation
+
+For detailed documentation, visit our [docs](docs/) directory or check out the [API Reference](docs/api.md).
+
+## 🐛 Issues
+
+Found a bug? Have a feature request? Please [open an issue](https://github.com/vinyluis/claude-code-supervisor/issues).
+
+---
+
+**Made with ❤️ by [Vinícius Trevisan](mailto:vinicius@viniciustrevisan.com)**
