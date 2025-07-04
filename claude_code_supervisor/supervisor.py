@@ -160,6 +160,7 @@ class SupervisorAgent:
     custom_prompt: str | None = None,
     llm: BaseLanguageModel | None = None,
     config: SupervisorConfig | None = None,
+    **kwargs,
   ) -> None:
 
     self._load_environment()
@@ -178,6 +179,23 @@ class SupervisorAgent:
     self.custom_prompt = custom_prompt
     self._initialize_claude_code()
     self.graph = self._build_graph()
+
+    # Check for credentials on the kwargs
+    if 'aws_access_key_id' in kwargs:
+      if not os.getenv('AWS_ACCESS_KEY_ID'):
+        os.environ['AWS_ACCESS_KEY_ID'] = kwargs['aws_access_key_id']
+    if 'aws_secret_access_key' in kwargs:
+      if not os.getenv('AWS_SECRET_ACCESS_KEY'):
+        os.environ['AWS_SECRET_ACCESS_KEY'] = kwargs['aws_secret_access_key']
+    if 'aws_region' in kwargs:
+      if not os.getenv('AWS_REGION'):
+        os.environ['AWS_REGION'] = kwargs['aws_region']
+    if 'anthropic_api_key' in kwargs:
+      if not os.getenv('ANTHROPIC_API_KEY'):
+        os.environ['ANTHROPIC_API_KEY'] = kwargs['anthropic_api_key']
+    if 'openai_api_key' in kwargs:
+      if not os.getenv('OPENAI_API_KEY'):
+        os.environ['OPENAI_API_KEY'] = kwargs['openai_api_key']
 
   def _timestamp(self) -> str:
     """Get current timestamp for logging"""
