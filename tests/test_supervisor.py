@@ -175,6 +175,63 @@ class TestSupervisorAgent:
       temperature=0.1
     )
 
+  def test_supervisor_agent_init_with_provided_llm(self) -> None:
+    """Test SupervisorAgent initialization with provided LLM (BYOM)"""
+    from langchain_openai import ChatOpenAI
+    import tempfile
+    import json
+    import os
+    
+    # Create a custom LLM
+    custom_llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.5)
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+      config_path = os.path.join(temp_dir, "config.json")
+      config_data = {
+        "model": {"name": "gpt-4o", "temperature": 0.1},
+        "agent": {
+          "max_iterations": 3,
+          "solution_filename": "solution.py",
+          "test_filename": "test_solution.py"
+        },
+        "claude_code": {"use_bedrock": False}
+      }
+      with open(config_path, 'w') as f:
+        json.dump(config_data, f)
+      
+      # Initialize with custom LLM
+      agent = SupervisorAgent(config_path, llm=custom_llm)
+      
+      # Should use the provided LLM, not create a new one from config
+      assert agent.llm is custom_llm
+    
+  def test_supervisor_agent_init_without_provided_llm(self) -> None:
+    """Test that SupervisorAgent falls back to config when no LLM provided"""
+    import tempfile
+    import json
+    import os
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+      config_path = os.path.join(temp_dir, "config.json")
+      config_data = {
+        "model": {"name": "gpt-4o", "temperature": 0.1, "provider": "openai"},
+        "agent": {
+          "max_iterations": 3,
+          "solution_filename": "solution.py",
+          "test_filename": "test_solution.py"
+        },
+        "claude_code": {"use_bedrock": False}
+      }
+      with open(config_path, 'w') as f:
+        json.dump(config_data, f)
+      
+      # Initialize without custom LLM
+      agent = SupervisorAgent(config_path)
+      
+      # Should create LLM from config
+      assert agent.llm is not None
+      assert hasattr(agent.llm, 'model_name')
+
   @patch('claude_code_supervisor.supervisor.ChatOpenAI')
   def test_call_llm_success(self, mock_chat_openai) -> None:
     """Test successful LLM call"""
@@ -788,6 +845,41 @@ class TestSupervisorAgentIntegration:
       assert result.expected_output == [1, 1, 3, 4, 5]
       assert result.data_format == "list"
       assert result.output_data == [1, 1, 3, 4, 5]
+
+  def test_supervisor_agent_with_byom(self) -> None:
+    """Test SupervisorAgent initialization with custom LLM (BYOM)"""
+    from langchain_openai import ChatOpenAI
+    
+    with tempfile.TemporaryDirectory() as temp_dir:
+      config_path = os.path.join(temp_dir, "config.json")
+      config_data = {
+        "model": {"name": "gpt-4o", "temperature": 0.1},
+        "agent": {
+          "max_iterations": 5,
+          "solution_filename": "solution.py",
+          "test_filename": "test_solution.py",
+          "test_timeout": 30
+        },
+        "claude_code": {
+          "use_bedrock": False
+        }
+      }
+      with open(config_path, 'w') as f:
+        json.dump(config_data, f)
+
+      # Create custom LLM
+      custom_llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.2)
+      
+      # Initialize with BYOM
+      agent = SupervisorAgent(config_path, llm=custom_llm)
+      
+      # Verify the provided LLM is used
+      assert agent.llm is custom_llm
+      
+      # Verify it's the custom LLM (check type and attributes)
+      assert isinstance(agent.llm, ChatOpenAI)
+      assert hasattr(agent.llm, 'model_name')
+      assert hasattr(agent.llm, 'temperature')
 
 
 if __name__ == "__main__":

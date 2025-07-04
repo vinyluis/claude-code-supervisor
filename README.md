@@ -107,6 +107,17 @@ agent = SupervisorAgent(
 result = agent.process("Create a calculator with basic operations")
 ```
 
+### Bring Your Own Model (BYOM)
+
+```python
+# Use your own LangChain LLM for guidance
+from langchain_openai import ChatOpenAI
+
+custom_llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.2)
+agent = SupervisorAgent(llm=custom_llm)
+result = agent.process("Create a data processing function")
+```
+
 ### Command Line Interface
 
 ```bash

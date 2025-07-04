@@ -40,6 +40,7 @@ from pathlib import Path
 import time
 from datetime import datetime
 from typing import Any
+from langchain_core.language_models.base import BaseLanguageModel
 
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage
@@ -130,6 +131,12 @@ class SupervisorAgent:
       >>>                        custom_prompt='Use object-oriented design')
       >>> result = agent.process('Create a calculator')
       >>>
+      >>> # Bring Your Own Model (BYOM)
+      >>> from langchain_openai import ChatOpenAI
+      >>> my_llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.2)
+      >>> agent = SupervisorAgent('supervisor_config.json', llm=my_llm)
+      >>> result = agent.process('Create a sorting function')
+      >>>
       >>> # Check if solved
       >>> if result.is_solved:
       >>>     print(f'Solution: {result.solution_path}')
@@ -137,20 +144,32 @@ class SupervisorAgent:
       >>> else:
       >>>     print(f'Error: {result.error_message}')
 
+  Args:
+      config_path: Path to JSON configuration file
+      custom_prompt: Optional additional instructions for Claude Code
+      llm: Optional LangChain LLM model for guidance (BYOM - Bring Your Own Model)
+
   Attributes:
       config: Configuration dictionary loaded from JSON file
       custom_prompt: Optional additional instructions for Claude Code
-      llm: OpenAI ChatLLM instance for guidance generation
+      llm: LLM instance for guidance generation (provided or configured)
       graph: LangGraph workflow compiled from node definitions
       base_claude_options: Pre-configured ClaudeCodeOptions for faster iterations
   """
 
-  def __init__(self, config_path: str = "claude_code_supervisor/supervisor_config.json",
-               custom_prompt: str | None = None) -> None:
+  def __init__(
+      self,
+      config_path: str = "claude_code_supervisor/supervisor_config.json",
+      custom_prompt: str | None = None,
+      llm: BaseLanguageModel | None = None
+      ) -> None:
     self._load_environment()
     self.config = self._load_config(config_path)
     self.custom_prompt = custom_prompt
-    self.llm = self._initialize_llm()
+    if llm is not None:
+      self.llm = llm
+    else:
+      self.llm = self._initialize_llm()
     self._initialize_claude_code()
     self.graph = self._build_graph()
 
@@ -274,11 +293,10 @@ class SupervisorAgent:
   def _initialize_llm(self):
     """Initialize the LLM for guidance analysis (OpenAI or AWS Bedrock)"""
     model_config = self.config["model"]
-    
-    # Default to OpenAI if provider is not specified (backward compatibility)
-    provider = model_config.get("provider", "openai")
-    
-    if provider == "bedrock":
+    provider = model_config.get("provider")
+    if provider is None:
+      raise ValueError("Model provider not specified in configuration. Please set 'provider' in the model config.")
+    elif provider == "bedrock":
       return ChatBedrockConverse(
         model=model_config["name"],
         temperature=model_config["temperature"],
