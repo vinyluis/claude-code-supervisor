@@ -1,7 +1,8 @@
 {
   "model": {
     "name": "gpt-4o",
-    "temperature": 0.1
+    "temperature": 0.1,
+    "provider": "openai"
   },
   "agent": {
     "max_iterations": 3,

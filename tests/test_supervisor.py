@@ -212,7 +212,7 @@ class TestSupervisorAgent:
   def test_initialize_claude_code_anthropic(self, mock_getenv) -> None:
     """Test Claude Code initialization with Anthropic provider"""
     mock_getenv.return_value = "test-api-key"
-    
+
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent.config = {
       "claude_code": {
@@ -230,7 +230,7 @@ class TestSupervisorAgent:
     agent._timestamp = Mock(return_value="12:00:00")
 
     result = agent._initialize_claude_code()
-    
+
     # Method now returns None, just verify it runs without error
     assert result is None
     # Verify that base_claude_options was created
@@ -261,7 +261,7 @@ class TestSupervisorAgent:
   def test_initialize_claude_code_with_custom_prompt(self, mock_getenv) -> None:
     """Test Claude Code initialization with custom prompt"""
     mock_getenv.return_value = "test-api-key"
-    
+
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent.config = {
       "claude_code": {
@@ -275,14 +275,13 @@ class TestSupervisorAgent:
     agent._timestamp = Mock(return_value="12:00:00")
 
     result = agent._initialize_claude_code()
-    
+
     # Verify that base_claude_options was created with custom prompt
     assert result is None
     assert hasattr(agent, 'base_claude_options')
     assert "You are an expert Python developer" in agent.base_claude_options.system_prompt
     assert "Always use type hints and add comprehensive docstrings" in agent.base_claude_options.system_prompt
     assert "Additional instructions:" in agent.base_claude_options.system_prompt
-
 
   @patch('claude_code_supervisor.supervisor.load_dotenv')
   @patch('claude_code_supervisor.supervisor.Path')
@@ -310,13 +309,12 @@ class TestSupervisorAgent:
 
     mock_load_dotenv.assert_not_called()
 
-
   def test_should_continue_monitoring_solved(self) -> None:
     """Test _should_continue_monitoring when problem is solved and files exist"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent.config = {"claude_code": {}}
     state = AgentState(problem_description="test", is_solved=True)
-    
+
     with patch('os.path.exists', return_value=True):
       result = agent._should_continue_monitoring(state)
       assert result == "validate"
@@ -352,12 +350,11 @@ class TestSupervisorAgent:
     result = agent._should_continue_monitoring(state)
     assert result == "guide"
 
-
   def test_monitor_claude_progress_session_inactive(self) -> None:
     """Test monitoring when Claude session is inactive"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
     state = AgentState(problem_description="test", claude_session_active=False)
-    
+
     result = agent._monitor_claude_progress(state)
     assert result == state  # Should return unchanged
 
@@ -368,7 +365,7 @@ class TestSupervisorAgent:
     agent._call_llm = Mock(return_value="Fix the import errors and ensure proper syntax")
     agent._format_todos_for_analysis = Mock(return_value="- [PENDING] Task 1")
     agent._format_output_log_for_analysis = Mock(return_value="Error: ImportError")
-    
+
     state = AgentState(
       problem_description="test",
       error_message="Some error",
@@ -388,7 +385,7 @@ class TestSupervisorAgent:
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent._run_tests = Mock(return_value=AgentState(problem_description="test", is_solved=True))
     agent._timestamp = Mock(return_value="12:00:00")
-    
+
     state = AgentState(
       problem_description="test",
       solution_path="solution.py",
@@ -403,7 +400,7 @@ class TestSupervisorAgent:
     """Test successful Claude session initiation"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent._timestamp = Mock(return_value="12:00:00")
-    
+
     state = AgentState(
       problem_description="Create hello world",
       solution_path="solution.py",
@@ -420,7 +417,7 @@ class TestSupervisorAgent:
     """Test Claude session initiation with exception"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent._timestamp = Mock(return_value="12:00:00")
-    
+
     state = AgentState(
       problem_description="Create hello world",
       solution_path="solution.py",
@@ -524,7 +521,7 @@ class TestSupervisorAgent:
     """Test validation when files are missing"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent._timestamp = Mock(return_value="12:00:00")
-    
+
     state = AgentState(
       problem_description="test",
       solution_path="solution.py",
@@ -539,7 +536,7 @@ class TestSupervisorAgent:
   def test_timestamp_method(self) -> None:
     """Test timestamp method returns correct format"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    
+
     timestamp = agent._timestamp()
     # Should be in HH:MM:SS format
     import re
@@ -698,7 +695,7 @@ class TestSupervisorAgentIntegration:
     input_data = [1, 2, 3, 4]
     expected_output = [4, 3, 2, 1]
     data_manager = DataManager()
-    
+
     state = AgentState(
       problem_description="Sort this list in reverse",
       input_data=input_data,
@@ -706,14 +703,14 @@ class TestSupervisorAgentIntegration:
       data_format="list",
       data_manager=data_manager
     )
-    
+
     assert state.input_data == input_data
     assert state.expected_output == expected_output
     assert state.data_format == "list"
     assert state.data_manager == data_manager
 
   def test_supervisor_with_data_manager(self) -> None:
-    """Test SupervisorAgent initialization includes DataManager"""
+    """Test SupervisorAgent creates DataManager when processing data"""
     with tempfile.TemporaryDirectory() as temp_dir:
       config_path = os.path.join(temp_dir, "config.json")
       config_data = {
@@ -732,9 +729,12 @@ class TestSupervisorAgentIntegration:
         json.dump(config_data, f)
 
       agent = SupervisorAgent(config_path)
-      
-      assert hasattr(agent, 'data_manager')
-      assert isinstance(agent.data_manager, DataManager)
+
+      # DataManager should not exist until we process data
+      assert not hasattr(agent, 'data_manager')
+
+      # DataManager is created in the process method when input_data is provided
+      # This is tested in other integration tests
 
   @patch('claude_code_supervisor.supervisor.StateGraph')
   def test_process_with_input_data(self, mock_state_graph) -> None:

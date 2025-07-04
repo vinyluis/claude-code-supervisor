@@ -44,6 +44,7 @@ from typing import Any
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
+from langchain_aws import ChatBedrockConverse
 from claude_code_sdk import query, ClaudeCodeOptions
 from claude_code_sdk.types import (
   AssistantMessage, TextBlock, ToolUseBlock, ToolResultBlock, ResultMessage,
@@ -144,7 +145,8 @@ class SupervisorAgent:
       base_claude_options: Pre-configured ClaudeCodeOptions for faster iterations
   """
 
-  def __init__(self, config_path: str = "supervisor_config.json", custom_prompt: str | None = None) -> None:
+  def __init__(self, config_path: str = "claude_code_supervisor/supervisor_config.json",
+               custom_prompt: str | None = None) -> None:
     self._load_environment()
     self.config = self._load_config(config_path)
     self.custom_prompt = custom_prompt
@@ -270,11 +272,25 @@ class SupervisorAgent:
     return workflow.compile()
 
   def _initialize_llm(self):
-    """Initialize the OpenAI LLM for guidance analysis"""
-    return ChatOpenAI(
-      model=self.config["model"]["name"],
-      temperature=self.config["model"]["temperature"]
-    )
+    """Initialize the LLM for guidance analysis (OpenAI or AWS Bedrock)"""
+    model_config = self.config["model"]
+    
+    # Default to OpenAI if provider is not specified (backward compatibility)
+    provider = model_config.get("provider", "openai")
+    
+    if provider == "bedrock":
+      return ChatBedrockConverse(
+        model=model_config["name"],
+        temperature=model_config["temperature"],
+        region_name=model_config.get("region", "us-east-1")
+      )
+    elif provider == "openai":
+      return ChatOpenAI(
+        model=model_config["name"],
+        temperature=model_config["temperature"]
+      )
+    else:
+      raise ValueError(f"Unsupported model provider: {provider}. Supported providers are 'openai' and 'bedrock'.")
 
   def _initiate_claude_session(self, state: AgentState) -> AgentState:
     """Initiate a Claude Code session for the problem"""
