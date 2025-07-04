@@ -118,6 +118,74 @@ agent = SupervisorAgent(llm=custom_llm)
 result = agent.process("Create a data processing function")
 ```
 
+### With Custom Configuration
+
+```python
+# Pass configuration as type-safe dataclass
+from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor.config import openai_config
+
+config = openai_config(model='gpt-4o-mini', temperature=0.1)
+config.agent.max_iterations = 3
+config.agent.solution_filename = 'my_solution.py'
+config.claude_code.max_turns = 25
+
+agent = SupervisorAgent(config=config)
+result = agent.process("Create a web scraper function")
+```
+
+### Advanced Configuration Examples
+
+```python
+# Use structured, type-safe configuration with dataclasses
+from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor.config import (
+    SupervisorConfig, ModelConfig, AgentConfig,
+    development_config, openai_config, bedrock_config
+)
+
+# Method 1: Use convenience functions
+config = development_config()  # Pre-configured for development
+agent = SupervisorAgent(config=config)
+
+# Method 2: Use builder functions with customization
+config = openai_config(model='gpt-4o-mini', temperature=0.2)
+config.agent.max_iterations = 5
+config.agent.solution_filename = 'custom_solution.py'
+agent = SupervisorAgent(config=config)
+
+# Method 3: Build from scratch with type safety
+config = SupervisorConfig(
+    model=ModelConfig(name='gpt-4o', temperature=0.1, provider='openai'),
+    agent=AgentConfig(max_iterations=3, test_timeout=60)
+)
+agent = SupervisorAgent(config=config)
+result = agent.process("Create a validation function")
+```
+
+### Combining Configuration with Custom LLM
+
+```python
+# Use dataclass config + custom LLM together
+from langchain_aws import ChatBedrockConverse
+from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor.config import SupervisorConfig, AgentConfig
+
+# Custom LLM for guidance
+guidance_llm = ChatBedrockConverse(
+    model='anthropic.claude-3-haiku-20240307-v1:0',
+    temperature=0.1,
+)
+
+# Type-safe configuration (no model config needed since we provide LLM)
+config = SupervisorConfig(
+    agent=AgentConfig(max_iterations=2, solution_filename='solution.py')
+)
+
+agent = SupervisorAgent(config=config, llm=guidance_llm)
+result = agent.process("Create a file parser")
+```
+
 ### Command Line Interface
 
 ```bash
@@ -150,57 +218,62 @@ Check out the [examples directory](examples/) for detailed usage examples:
 
 ## 🔧 Configuration
 
-Create a `supervisor_config.json` file to customize behavior:
+SupervisorAgent uses type-safe dataclass configuration for better IDE support and validation:
 
-### OpenAI Configuration (default)
-```json
-{
-  "model": {
-    "name": "gpt-4o",
-    "temperature": 0.1,
-    "provider": "openai"
-  },
-  "agent": {
-    "max_iterations": 5,
-    "solution_filename": "solution.py",
-    "test_filename": "test_solution.py"
-  },
-  "claude_code": {
-    "provider": "anthropic",
-    "max_turns": 20,
-    "max_thinking_tokens": 8000
-  }
-}
+### Quick Setup with Convenience Functions
+
+```python
+from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor.config import openai_config, bedrock_config
+
+# OpenAI configuration
+config = openai_config(model='gpt-4o-mini', temperature=0.2)
+agent = SupervisorAgent(config=config)
+
+# AWS Bedrock configuration
+config = bedrock_config(
+  model='anthropic.claude-3-haiku-20240307-v1:0',
+)
+agent = SupervisorAgent(config=config)
 ```
 
-### AWS Bedrock Configuration
-```json
-{
-  "model": {
-    "name": "anthropic.claude-3-5-sonnet-20241022-v2:0",
-    "temperature": 0.1,
-    "provider": "bedrock",
-    "region": "us-east-1"
-  },
-  "agent": {
-    "max_iterations": 5,
-    "solution_filename": "solution.py",
-    "test_filename": "test_solution.py"
-  },
-  "claude_code": {
-    "use_bedrock": true,
-    "max_turns": 20,
-    "max_thinking_tokens": 8000
-  }
-}
+### Custom Configuration from Scratch
+
+```python
+from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor.config import SupervisorConfig, ModelConfig, AgentConfig
+
+# Build custom configuration
+config = SupervisorConfig(
+  model=ModelConfig(
+    name='gpt-4o',
+    temperature=0.1,
+    provider='openai'
+  ),
+  agent=AgentConfig(
+    max_iterations=5,
+    solution_filename='solution.py',
+    test_filename='test_solution.py'
+  )
+)
+
+agent = SupervisorAgent(config=config)
 ```
 
-### Configuration Options
+### Environment-Specific Configurations
 
-- **model.provider**: `"openai"` or `"bedrock"`
-- **model.name**: Model identifier (e.g., `"gpt-4o"` for OpenAI, `"anthropic.claude-3-5-sonnet-20241022-v2:0"` for Bedrock)
-- **model.region**: AWS region for Bedrock (e.g., `"us-east-1"`)
-- **claude_code.use_bedrock**: Set to `true` to use AWS Bedrock for Claude Code itself, or `false` to use Anthropic API
+```python
+from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor.config import development_config, production_config
+
+# Development environment
+dev_config = development_config()
+dev_agent = SupervisorAgent(config=dev_config)
+
+# Production environment  
+prod_config = production_config()
+prod_agent = SupervisorAgent(config=prod_config)
+```
 
 ## 🧪 Testing
 

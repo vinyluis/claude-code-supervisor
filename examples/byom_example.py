@@ -68,57 +68,9 @@ def byom_example():
     print(f'❌ Error during example: {e}')
 
 
-def byom_pipeline_integration_example():
-  """Example showing how to integrate BYOM into existing ML pipelines"""
-
-  print('\n=== Pipeline Integration Example ===')
-  print('This shows how to reuse an existing LLM in your pipeline\n')
-
-  try:
-    from langchain_openai import ChatOpenAI
-    from claude_code_supervisor import SupervisorAgent
-
-    # Simulate an existing ML pipeline with a configured LLM
-    print('🔧 Simulating existing ML pipeline...')
-
-    # This could be your existing LLM used elsewhere in your pipeline
-    pipeline_llm = ChatOpenAI(
-      model='gpt-4o',
-      temperature=0.0
-    )
-
-    print(f'   Pipeline LLM: {pipeline_llm.model_name}')
-
-    # Reuse the same LLM for SupervisorAgent guidance
-    print('\n♻️  Reusing pipeline LLM for SupervisorAgent...')
-
-    SupervisorAgent(
-      custom_prompt='Write efficient, well-documented code with comprehensive tests',
-      llm=pipeline_llm  # Reuse existing LLM
-    )
-
-    print('✅ SupervisorAgent configured to reuse pipeline LLM')
-    print('   This avoids creating duplicate LLM instances and')
-    print('   ensures consistent model behavior across your pipeline')
-
-    # Benefits of BYOM approach
-    print('\n💡 Benefits of BYOM approach:')
-    print('   • Reuse existing LLM configurations')
-    print('   • Consistent model behavior across pipeline')
-    print('   • Avoid duplicate API connections')
-    print('   • Centralized LLM management')
-    print('   • Cost optimization through shared instances')
-
-  except ImportError as e:
-    print(f'❌ Missing dependency: {e}')
-  except Exception as e:
-    print(f'❌ Error: {e}')
-
-
 def main():
   """Run all BYOM examples"""
   byom_example()
-  byom_pipeline_integration_example()
 
   print('\n' + '=' * 60)
   print('🎯 BYOM (Bring Your Own Model) Summary:')

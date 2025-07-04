@@ -32,7 +32,6 @@ Usage:
 
 import os
 import sys
-import json
 import subprocess
 import asyncio
 from dataclasses import dataclass, field
@@ -53,6 +52,7 @@ from claude_code_sdk.types import (
 )
 from dotenv import load_dotenv
 from .data_manager import DataManager
+from .config import SupervisorConfig, development_config
 
 
 @dataclass
@@ -65,7 +65,6 @@ class AgentState:
   test_results: str = ""
   solution_path: str = ""
   test_path: str = ""
-  config: dict | None = None
   is_solved: bool = False
   error_message: str = ""
   guidance_messages: list = field(default_factory=list)
@@ -79,7 +78,7 @@ class AgentState:
   # Data I/O fields
   input_data: Any = None
   expected_output: Any = None
-  data_format: str = "auto"
+  data_format: str = 'auto'
   output_data: Any = None
   data_manager: DataManager | None = None
 
@@ -104,10 +103,7 @@ class SupervisorAgent:
   6. Managing session continuity across multiple iterations
 
   Configuration:
-  The agent is configured via JSON file containing:
-  - model: LLM settings for guidance analysis (name, temperature)
-  - agent: Iteration limits, file names, test timeouts
-  - claude_code: SDK options, timeouts, provider settings
+  - The agent is configured using the dataclasses available in `config.py`
 
   Key Features:
   - Session resumption for continuity across iterations
@@ -120,21 +116,20 @@ class SupervisorAgent:
 
   Example:
       >>> # Basic usage
-      >>> agent = SupervisorAgent('supervisor_config.json')
+      >>> agent = SupervisorAgent()
       >>> result = agent.process(
       >>>     'Create a function to calculate fibonacci numbers',
       >>>     example_output='fib(8) should return 21'
       >>> )
       >>>
       >>> # With custom prompt
-      >>> agent = SupervisorAgent('supervisor_config.json',
-      >>>                        custom_prompt='Use object-oriented design')
+      >>> agent = SupervisorAgent(custom_prompt='Use object-oriented design')
       >>> result = agent.process('Create a calculator')
       >>>
       >>> # Bring Your Own Model (BYOM)
       >>> from langchain_openai import ChatOpenAI
       >>> my_llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.2)
-      >>> agent = SupervisorAgent('supervisor_config.json', llm=my_llm)
+      >>> agent = SupervisorAgent(llm=my_llm)
       >>> result = agent.process('Create a sorting function')
       >>>
       >>> # Check if solved
@@ -145,31 +140,38 @@ class SupervisorAgent:
       >>>     print(f'Error: {result.error_message}')
 
   Args:
-      config_path: Path to JSON configuration file
-      custom_prompt: Optional additional instructions for Claude Code
-      llm: Optional LangChain LLM model for guidance (BYOM - Bring Your Own Model)
+    custom_prompt: Optional additional instructions for Claude Code
+    llm: Optional LangChain LLM model for guidance (BYOM - Bring Your Own Model)
 
   Attributes:
-      config: Configuration dictionary loaded from JSON file
-      custom_prompt: Optional additional instructions for Claude Code
-      llm: LLM instance for guidance generation (provided or configured)
-      graph: LangGraph workflow compiled from node definitions
-      base_claude_options: Pre-configured ClaudeCodeOptions for faster iterations
+    config: Configuration for the supervisor agent
+    custom_prompt: Optional additional instructions for Claude Code
+    llm: LLM instance for guidance generation (provided or configured)
+    graph: LangGraph workflow compiled from node definitions
+    base_claude_options: Pre-configured ClaudeCodeOptions for faster iterations
   """
 
   def __init__(
-      self,
-      config_path: str = "claude_code_supervisor/supervisor_config.json",
-      custom_prompt: str | None = None,
-      llm: BaseLanguageModel | None = None
-      ) -> None:
+    self,
+    custom_prompt: str | None = None,
+    llm: BaseLanguageModel | None = None,
+    config: SupervisorConfig | None = None,
+  ) -> None:
+
     self._load_environment()
-    self.config = self._load_config(config_path)
-    self.custom_prompt = custom_prompt
+
+    if config is not None and isinstance(config, SupervisorConfig):
+      self.config = config
+    else:
+      print(f"[{self._timestamp()}] 🔧 Loading default configuration...")
+      self.config = development_config()
+
     if llm is not None:
       self.llm = llm
     else:
       self.llm = self._initialize_llm()
+
+    self.custom_prompt = custom_prompt
     self._initialize_claude_code()
     self.graph = self._build_graph()
 
@@ -187,53 +189,14 @@ class SupervisorAgent:
     else:
       print("⚠️Warning: .env file not found. Environment variables may need to be set manually.")
 
-  def _load_config(self, config_path: str) -> dict:
-    """
-    Load configuration from JSON file.
-    Useful for customizing model parameters and agent behavior without changing the .py file.
-    """
-    try:
-      with open(config_path, 'r') as f:
-        return json.load(f)
-    except FileNotFoundError:
-      print(f"⚠️Config file {config_path} not found. Using defaults.")
-      return {
-        "model": {
-          "name": "gpt-4o",
-          "temperature": 0.1
-        },
-        "agent": {
-          "max_iterations": 3,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "provider": "anthropic",
-          "use_bedrock": False,
-          "working_directory": None,
-          "javascript_runtime": "node",
-          "executable_args": [],
-          "claude_code_path": None,
-          "session_timeout_seconds": 300,
-          "activity_timeout_seconds": 180,
-          "max_turns": 20,
-          "max_thinking_tokens": 8000
-        }
-      }
-    except json.JSONDecodeError as e:
-      print(f"⚠️Error parsing config file: {e}")
-      sys.exit(1)
-
   def _initialize_claude_code(self) -> None:
     """
     Initialize Claude Code SDK configuration and prepare base options
     """
-    claude_config = self.config.get("claude_code", {})
-
+    claude_config = self.config.claude_code
     # Set environment variables based on provider choice
-    if claude_config.get("use_bedrock", False):
-      os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"
+    if claude_config.use_bedrock:
+      os.environ["CLAUDE_CODE_USE_BEDROCK"] = '1'
       print(f"[{self._timestamp()}] 🔧 Configured Claude Code to use Amazon Bedrock")
     else:
       # Default to Anthropic API
@@ -244,7 +207,7 @@ class SupervisorAgent:
         print(f"[{self._timestamp()}] 🔧 Configured Claude Code to use Anthropic API")
 
     # Build system prompt with optional custom prompt
-    base_system_prompt = "You are an expert Python developer. Use the TodoWrite tool to plan and track your work. Always run tests to verify your solutions."
+    base_system_prompt = 'You are an expert Python developer. Use the TodoWrite tool to plan and track your work. Always run tests to verify your solutions.'
     if self.custom_prompt:
       system_prompt = f"{base_system_prompt}\n\nAdditional instructions:\n{self.custom_prompt}"
     else:
@@ -254,9 +217,9 @@ class SupervisorAgent:
     self.base_claude_options = ClaudeCodeOptions(
       cwd=os.getcwd(),
       permission_mode='acceptEdits',
-      max_turns=claude_config.get('max_turns', 20),
+      max_turns=claude_config.max_turns,
       system_prompt=system_prompt,
-      max_thinking_tokens=claude_config.get('max_thinking_tokens', 8000)
+      max_thinking_tokens=claude_config.max_thinking_tokens
     )
     print(f"[{self._timestamp()}] 🔧 Pre-configured Claude Code options for faster iterations")
 
@@ -264,53 +227,57 @@ class SupervisorAgent:
     """Build the LangGraph workflow"""
     workflow = StateGraph(AgentState)
 
-    workflow.add_node("initiate_claude", self._initiate_claude_session)
+    workflow.add_node("initiate_claude", self._initiate_claude_code_session)
     workflow.add_node("monitor_claude", self._monitor_claude_progress)
     workflow.add_node("validate_solution", self._validate_solution)
     workflow.add_node("provide_guidance", self._provide_guidance)
     workflow.add_node("finalize", self._finalize_solution)
 
-    workflow.add_edge(START, "initiate_claude")
-    workflow.add_edge("initiate_claude", "monitor_claude")
+    workflow.add_edge(START, 'initiate_claude')
+    workflow.add_edge("initiate_claude", 'monitor_claude')
 
     workflow.add_conditional_edges(
-      "monitor_claude",
+      'monitor_claude',
       self._should_continue_monitoring,
       {
-        "continue": "monitor_claude",
-        "validate": "validate_solution",
-        "guide": "provide_guidance",
-        "finish": "finalize"
+        'continue': 'monitor_claude',
+        'validate': 'validate_solution',
+        'guide': 'provide_guidance',
+        'finish': 'finalize'
       }
     )
 
-    workflow.add_edge("validate_solution", "finalize")
-    workflow.add_edge("provide_guidance", "monitor_claude")
+    workflow.add_edge("validate_solution", 'finalize')
+    workflow.add_edge("provide_guidance", 'monitor_claude')
     workflow.add_edge("finalize", END)
 
     return workflow.compile()
 
   def _initialize_llm(self):
     """Initialize the LLM for guidance analysis (OpenAI or AWS Bedrock)"""
-    model_config = self.config["model"]
-    provider = model_config.get("provider")
+    model_config = self.config.model
+    provider = model_config.provider
     if provider is None:
       raise ValueError("Model provider not specified in configuration. Please set 'provider' in the model config.")
-    elif provider == "bedrock":
+    elif provider == 'bedrock':
+      if not os.getenv('AWS_ACCESS_KEY_ID') or not os.getenv('AWS_SECRET_ACCESS_KEY'):
+        raise ValueError("AWS credentials not found in environment variables. Please set 'AWS_ACCESS_KEY_ID' and 'AWS_SECRET_ACCESS_KEY'.")
       return ChatBedrockConverse(
-        model=model_config["name"],
-        temperature=model_config["temperature"],
-        region_name=model_config.get("region", "us-east-1")
+        model=model_config.name,
+        temperature=model_config.temperature,
+        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
+        region_name=os.getenv('AWS_REGION'),
       )
-    elif provider == "openai":
+    elif provider == 'openai':
       return ChatOpenAI(
-        model=model_config["name"],
-        temperature=model_config["temperature"]
+        model=model_config.name,
+        temperature=model_config.temperature,
       )
     else:
       raise ValueError(f"Unsupported model provider: {provider}. Supported providers are 'openai' and 'bedrock'.")
 
-  def _initiate_claude_session(self, state: AgentState) -> AgentState:
+  def _initiate_claude_code_session(self, state: AgentState) -> AgentState:
     """Initiate a Claude Code session for the problem"""
     print(f"\n[{self._timestamp()}] 🚀 Initiating Claude Code session...")
 
@@ -329,7 +296,6 @@ class SupervisorAgent:
         state.data_manager.record_operation(state.input_data, data_format, 'input')
 
         input_data_info = f"""
-
 Input Data Available:
 {data_context}
 
@@ -481,8 +447,8 @@ Please update your todo list and continue with the implementation.
 
         try:
           # Add timeout to prevent infinite waiting
-          claude_config = self.config.get('claude_code', {})
-          timeout_seconds = claude_config.get('session_timeout_seconds', 300)
+          claude_config = self.config.claude_code
+          timeout_seconds = claude_config.session_timeout_seconds
           start_time = time.time()
           print(f"[{self._timestamp()}] Session timeout set to {timeout_seconds} seconds")
 
@@ -780,7 +746,7 @@ Please update your todo list and continue working on the solution, addressing th
   def _format_todos_for_analysis(self, todos: list[dict]) -> str:
     """Format todo list for LLM analysis"""
     if not todos:
-      return "No todos available"
+      return 'No todos available'
 
     formatted = []
     for todo in todos[-5:]:  # Last 5 todos
@@ -788,27 +754,27 @@ Please update your todo list and continue working on the solution, addressing th
       content = todo.get('content', 'Unknown task')
       formatted.append(f"- [{status.upper()}] {content}")
 
-    return "\n".join(formatted)
+    return '\n'.join(formatted)
 
   def _format_output_log_for_analysis(self, output_log: list[str]) -> str:
     """Format output log for LLM analysis"""
     if not output_log:
-      return "No output available"
+      return 'No output available'
 
     # Get last few entries, excluding the initial prompt
     relevant_entries = [entry for entry in output_log[-3:] if not entry.startswith('PROMPT:')]
     if not relevant_entries:
-      return "No relevant output available"
+      return 'No relevant output available'
 
     # Truncate long entries
     formatted = []
     for entry in relevant_entries:
       if len(entry) > 300:
-        formatted.append(entry[:300] + "...")
+        formatted.append(entry[:300] + '...')
       else:
         formatted.append(entry)
 
-    return "\n".join(formatted)
+    return '\n'.join(formatted)
 
   def _call_llm(self, operation: str, prompt: str) -> str:
     """Wrapper for LLM calls for guidance analysis"""
@@ -847,17 +813,16 @@ Please update your todo list and continue working on the solution, addressing th
     # Check if solution file exists
     if not os.path.exists(state.solution_path):
       state.test_results = (f"Solution file {state.solution_path} "
-                            "does not exist")
+                            'does not exist')
       state.is_solved = False
       print(f"[{self._timestamp()}] ❌ Solution file not found: {state.solution_path}\n")
       return state
 
     try:
-      timeout = state.config["agent"]["test_timeout"] if state.config else 30
-
+      timeout = self.config.agent.test_timeout
       # First try to run a syntax check on both files
-      for file_path, file_type in [(state.solution_path, "solution"),
-                                   (state.test_path, "test")]:
+      for file_path, file_type in [(state.solution_path, 'solution'),
+                                   (state.test_path, 'test')]:
         try:
           with open(file_path, 'r') as f:
             compile(f.read(), file_path, 'exec')
@@ -870,8 +835,8 @@ Please update your todo list and continue working on the solution, addressing th
 
       # Run the tests
       result = subprocess.run(
-        [sys.executable, "-m", "pytest", state.test_path, "-v",
-         "--tb=short", "--no-header"],
+        [sys.executable, '-m', 'pytest', state.test_path, '-v',
+         '--tb=short', '--no-header'],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -896,16 +861,16 @@ Please update your todo list and continue working on the solution, addressing th
       print()
 
     except subprocess.TimeoutExpired:
-      timeout = state.config["agent"]["test_timeout"] if state.config else 30
+      timeout = self.config.agent.test_timeout
       state.test_results = f"Tests timed out after {timeout} seconds"
       state.is_solved = False
       state.error_message = f"Tests timed out after {timeout} seconds"
       print(f"[{self._timestamp()}] ⏰ Tests timed out after {timeout} seconds\n")
     except FileNotFoundError:
       state.test_results = ("pytest not found. "
-                            "Please install pytest: pip install pytest")
+                            'Please install pytest: pip install pytest')
       state.is_solved = False
-      state.error_message = "pytest not found"
+      state.error_message = 'pytest not found'
       print(f"[{self._timestamp()}] ❌ pytest not found. Install with: pip install pytest\n")
     except Exception as e:
       state.test_results = f"Error running tests: {str(e)}"
@@ -919,35 +884,35 @@ Please update your todo list and continue working on the solution, addressing th
     """Decide what to do next based on Claude's progress"""
     # Check if we've exceeded maximum iterations
     if state.current_iteration >= state.max_iterations:
-      return "finish"
+      return 'finish'
 
     # If Claude session is not active, we need guidance
     if not state.claude_session_active and state.error_message:
       if not state.guidance_provided:
         state.current_iteration += 1
-        return "guide"
+        return 'guide'
       else:
-        return "finish"
+        return 'finish'
 
     # Check if solution files exist
     if os.path.exists(state.solution_path) and os.path.exists(state.test_path):
-      return "validate"
+      return 'validate'
 
     # Check for timeout (Claude has been working too long without progress)
     current_time = time.time()
-    claude_config = self.config.get('claude_code', {})
-    activity_timeout = claude_config.get('activity_timeout_seconds', 180)
+    claude_config = self.config.claude_code
+    activity_timeout = claude_config.activity_timeout_seconds
     if current_time - state.last_activity_time > activity_timeout:
       state.error_message = f"Claude Code session timed out after {activity_timeout} seconds of inactivity"
       state.claude_session_active = False
-      return "guide"
+      return 'guide'
 
     # Continue monitoring if Claude is still active
     if state.claude_session_active:
-      return "continue"
+      return 'continue'
 
     # Default to finishing if we're in an unknown state
-    return "finish"
+    return 'finish'
 
   def _finalize_solution(self, state: AgentState) -> AgentState:
     """Finalize the solution"""
@@ -966,7 +931,7 @@ Please update your todo list and continue working on the solution, addressing th
             f"pytest {state.test_path}")
     else:
       print(f"\n[{self._timestamp()}] ❌ Maximum iterations ({state.max_iterations}) reached "
-            "without solving the problem.")
+            'without solving the problem.')
       print(f"[{self._timestamp()}] 📝 Last error: {state.error_message}")
       print(f"\n[{self._timestamp()}] 📁 Files generated (may contain partial solutions):")
       if os.path.exists(state.solution_path):
@@ -981,7 +946,7 @@ Please update your todo list and continue working on the solution, addressing th
   def process(self, problem_description: str, *,
               input_data: Any = None,
               expected_output: Any = None,
-              data_format: str = "auto",
+              data_format: str = 'auto',
               example_output: str | None = None) -> AgentState:
     """
     Main method to process a problem with optional input/output data.
@@ -1008,10 +973,9 @@ Please update your todo list and continue working on the solution, addressing th
       input_data=input_data,
       expected_output=expected_output,
       data_format=data_format,
-      max_iterations=self.config["agent"]["max_iterations"],
-      solution_path=self.config["agent"]["solution_filename"],
-      test_path=self.config["agent"]["test_filename"],
-      config=self.config,
+      max_iterations=self.config.agent.max_iterations,
+      solution_path=self.config.agent.solution_filename,
+      test_path=self.config.agent.test_filename,
       data_manager=data_manager
     )
 
@@ -1047,7 +1011,7 @@ Please update your todo list and continue working on the solution, addressing th
       print("\n📝 Configuration is loaded from supervisor_config.json")
       print("🔑 Make sure to set OPENAI_API_KEY environment variable")
       print("📦 Required: pip install pytest langchain langchain-openai "
-            "langgraph")
+            'langgraph')
       sys.exit(1)
 
     # Parse arguments
@@ -1071,17 +1035,17 @@ Please update your todo list and continue working on the solution, addressing th
 
     # Check for pytest
     try:
-      subprocess.run([sys.executable, "-m", "pytest", "--version"],
+      subprocess.run([sys.executable, '-m', 'pytest', '--version'],
                      capture_output=True, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
       print("⚠️ Warning: pytest not found. Installing pytest...")
       try:
-        subprocess.run([sys.executable, "-m", "pip", "install", "pytest"],
+        subprocess.run([sys.executable, '-m', 'pip', 'install', 'pytest'],
                        check=True)
         print("✅ pytest installed successfully")
       except subprocess.CalledProcessError:
         print("❌ Failed to install pytest. Please install manually: "
-              "pip install pytest")
+              'pip install pytest')
         sys.exit(1)
 
     try:
@@ -1090,12 +1054,12 @@ Please update your todo list and continue working on the solution, addressing th
         print(f"📝 Example: {example_output}")
       if custom_prompt:
         print(f"💡 Custom prompt: {custom_prompt}")
-      print("\n" + "=" * 60)
+      print("\n" + '=' * 60)
 
       agent = cls(custom_prompt=custom_prompt)
       final_state = agent.process(problem_description, example_output=example_output)
 
-      print("\n" + "=" * 60)
+      print("\n" + '=' * 60)
       if final_state.is_solved:
         print("🎉 SUCCESS: Problem solved!")
       else:
@@ -1114,5 +1078,5 @@ Please update your todo list and continue working on the solution, addressing th
       sys.exit(1)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
   SupervisorAgent.cli_run()

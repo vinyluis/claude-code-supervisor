@@ -21,8 +21,10 @@ Example:
     ...     expected_output=[12, 25, 34, 64]
     ... )
 
-    With custom prompts:
-    >>> agent = SupervisorAgent(custom_prompt='Use object-oriented design')
+    With custom configuration:
+    >>> from claude_code_supervisor.config import openai_config
+    >>> config = openai_config(model='gpt-4o-mini', temperature=0.2)
+    >>> agent = SupervisorAgent(config=config, custom_prompt='Use object-oriented design')
     >>> result = agent.process('Create a calculator')
 """
 
@@ -38,5 +40,5 @@ __all__ = [
     'SupervisorAgent',
     'AgentState',
     'DataManager',
-    'DataInfo'
+    'DataInfo',
 ]
