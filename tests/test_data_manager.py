@@ -69,7 +69,7 @@ class TestDataManager:
     """Test data description generation for lists"""
     test_data = [1, 2, 3, 4]
     description = data_manager.get_data_description(test_data)
-    
+
     assert 'List with 4 items' in description
     assert 'Items are of type: int' in description
     assert 'Format: list' in description
@@ -78,7 +78,7 @@ class TestDataManager:
     """Test data description generation for dictionaries"""
     test_data = {'name': 'Alice', 'age': 30, 'city': 'NYC'}
     description = data_manager.get_data_description(test_data)
-    
+
     assert 'Dictionary with 3 keys' in description
     assert 'name' in description
     assert 'Format: dict' in description
@@ -87,7 +87,7 @@ class TestDataManager:
     """Test data description generation for strings"""
     test_data = 'Hello, World!'
     description = data_manager.get_data_description(test_data)
-    
+
     assert 'String with 13 characters' in description
     assert 'Hello, World!' in description
     assert 'Format: string' in description
@@ -96,7 +96,7 @@ class TestDataManager:
     """Test context serialization for lists"""
     test_data = [1, 2, 3, 4]
     result = data_manager.serialize_for_context(test_data)
-    
+
     assert 'Input data (list):' in result
     assert '[1, 2, 3, 4]' in result
 
@@ -104,7 +104,7 @@ class TestDataManager:
     """Test context serialization for large lists"""
     test_data = list(range(20))
     result = data_manager.serialize_for_context(test_data, max_items=3)
-    
+
     assert 'list with 20 items' in result
     assert 'showing first 3' in result
 
@@ -112,7 +112,7 @@ class TestDataManager:
     """Test context serialization for dictionaries"""
     test_data = {'name': 'Alice', 'age': 30}
     result = data_manager.serialize_for_context(test_data)
-    
+
     assert 'Input data (dict):' in result
     assert 'Alice' in result
 
@@ -120,7 +120,7 @@ class TestDataManager:
     """Test context serialization for strings"""
     test_data = 'Hello, World!'
     result = data_manager.serialize_for_context(test_data)
-    
+
     assert 'Input data (string):' in result
     assert 'Hello, World!' in result
 
@@ -128,9 +128,9 @@ class TestDataManager:
     """Test operation recording"""
     test_data = [1, 2, 3]
     initial_count = len(data_manager.processed_data)
-    
+
     data_manager.record_operation(test_data, 'list', 'process')
-    
+
     assert len(data_manager.processed_data) == initial_count + 1
     assert data_manager.processed_data[-1].format == 'list'
     assert 'List with 3 items' in data_manager.processed_data[-1].description
@@ -140,9 +140,9 @@ class TestDataManager:
     # Record some operations
     data_manager.record_operation([1, 2, 3], 'list')
     data_manager.record_operation({'key': 'value'}, 'dict')
-    
+
     summary = data_manager.get_summary()
-    
+
     assert summary['total_operations'] == 2
     assert 'list' in summary['formats_processed']
     assert 'dict' in summary['formats_processed']
@@ -153,7 +153,7 @@ class TestDataManager:
     # Should fall back to dict format for unknown types
     class MockDataType:
       pass
-    
+
     mock_obj = MockDataType()
     assert data_manager.infer_format(mock_obj) == 'dict'
 

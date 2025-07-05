@@ -5,7 +5,7 @@ Handles in-memory data processing and format detection for input/output operatio
 Simplified version that focuses on essential functionality only.
 """
 
-from typing import Any, Dict
+from typing import Any
 from dataclasses import dataclass
 import json
 
@@ -82,7 +82,7 @@ class DataManager:
         if isinstance(data[0], dict) and len(data) <= 5:
           descriptions.append(f'Sample item: {data[0]}')
         elif len(data) <= 10:
-          descriptions.append(f'Sample items: {data[:3]}{"..." if len(data) > 3 else ""}')
+          descriptions.append(f'Sample items: {data[:3]}{'...' if len(data) > 3 else ''}')
 
     elif isinstance(data, dict):
       descriptions.append(f'Dictionary with {len(data)} keys')
@@ -95,9 +95,9 @@ class DataManager:
     elif isinstance(data, str):
       descriptions.append(f'String with {len(data)} characters')
       if len(data) <= 100:
-        descriptions.append(f'Content: "{data}"')
+        descriptions.append(f'Content: \'{data}\'')
       else:
-        descriptions.append(f'Preview: "{data[:50]}..."')
+        descriptions.append(f'Preview: \'{data[:50]}...\'')
 
     elif isinstance(data, pd.DataFrame):
       descriptions.append(f'DataFrame with {len(data)} rows and {len(data.columns)} columns')
@@ -146,12 +146,12 @@ class DataManager:
 
       elif isinstance(data, str):
         if len(data) <= 200:
-          return f'Input data (string): "{data}"'
+          return f'Input data (string): \'{data}\''
         else:
-          return f'Input data (string, {len(data)} chars): "{data[:100]}..."'
+          return f'Input data (string, {len(data)} chars): \'{data[:100]}...\''
 
       elif isinstance(data, pd.DataFrame):
-        return f'Input data (DataFrame {data.shape}): {data.head(max_items).to_dict("records")}'
+        return f'Input data (DataFrame {data.shape}): {data.head(max_items).to_dict('records')}'
 
       elif isinstance(data, np.ndarray):
         if data.size <= max_items * 2:
@@ -192,7 +192,7 @@ class DataManager:
     )
     self.processed_data.append(info)
 
-  def get_summary(self) -> Dict[str, Any]:
+  def get_summary(self) -> dict[str, Any]:
     """Get summary of data processing operations"""
     return {
       'total_operations': len(self.processed_data),
