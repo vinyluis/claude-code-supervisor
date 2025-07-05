@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch, mock_open
 # Import the classes to test
 from claude_code_supervisor import SupervisorAgent, AgentState
 from claude_code_supervisor.data_manager import DataManager
+from claude_code_supervisor.config import SupervisorConfig, development_config
 
 
 class TestAgentState:
@@ -28,7 +29,6 @@ class TestAgentState:
     assert state.test_results == ""
     assert state.solution_path == ""
     assert state.test_path == ""
-    assert state.config is None
     assert state.is_solved is False
     assert state.error_message == ""
     assert state.guidance_messages == []
@@ -49,7 +49,6 @@ class TestAgentState:
 
   def test_agent_state_initialization_custom(self) -> None:
     """Test AgentState with custom parameters"""
-    config = {"test": "config"}
     state = AgentState(
       problem_description="Custom problem",
       example_output="Expected output",
@@ -58,7 +57,6 @@ class TestAgentState:
       test_results="All tests passed",
       solution_path="/path/to/solution.py",
       test_path="/path/to/test.py",
-      config=config,
       is_solved=True,
       error_message="No errors"
     )
@@ -70,7 +68,6 @@ class TestAgentState:
     assert state.test_results == "All tests passed"
     assert state.solution_path == "/path/to/solution.py"
     assert state.test_path == "/path/to/test.py"
-    assert state.config == config
     assert state.is_solved is True
     assert state.error_message == "No errors"
     assert state.guidance_messages == []
@@ -85,69 +82,18 @@ class TestSupervisorAgent:
   """Test cases for the SupervisorAgent class"""
 
   @pytest.fixture
-  def mock_config(self) -> dict:
+  def mock_config(self) -> SupervisorConfig:
     """Fixture providing a mock configuration"""
-    return {
-      "model": {"name": "gpt-4o", "temperature": 0.1},
-      "agent": {
-        "max_iterations": 5,
-        "solution_filename": "solution.py",
-        "test_filename": "test_solution.py",
-        "test_timeout": 30
-      }
-    }
+    return development_config()
 
-  @pytest.fixture
-  def temp_config_file(self, mock_config: dict):
-    """Fixture creating a temporary config file"""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json',
-                                     delete=False) as f:
-      json.dump(mock_config, f)
-      temp_path = f.name
-    yield temp_path
-    os.unlink(temp_path)
-
-  def test_load_config_success(self, temp_config_file, mock_config) -> None:
-    """Test successful config loading from file"""
-    agent = SupervisorAgent.__new__(SupervisorAgent)
-    config = agent._load_config(temp_config_file)
-    assert config == mock_config
-
-  def test_load_config_file_not_found(self) -> None:
-    """Test config loading when file doesn't exist (uses defaults)"""
-    agent = SupervisorAgent.__new__(SupervisorAgent)
-    config = agent._load_config("nonexistent_config.json")
-
-    expected_defaults = {
-      "model": {"name": "gpt-4o", "temperature": 0.1},
-      "agent": {
-        "max_iterations": 3,
-        "solution_filename": "solution.py",
-        "test_filename": "test_solution.py",
-        "test_timeout": 30
-      },
-      "claude_code": {
-        "provider": "anthropic",
-        "use_bedrock": False,
-        "working_directory": None,
-        "javascript_runtime": "node",
-        "executable_args": [],
-        "claude_code_path": None,
-        "session_timeout_seconds": 300,
-        "activity_timeout_seconds": 180,
-        "max_turns": 20,
-        "max_thinking_tokens": 8000
-      }
-    }
-    assert config == expected_defaults
-
-  @patch('builtins.open', mock_open(read_data='invalid json'))
-  def test_load_config_invalid_json(self) -> None:
-    """Test config loading with invalid JSON (should exit)"""
-    agent = SupervisorAgent.__new__(SupervisorAgent)
-
-    with pytest.raises(SystemExit):
-      agent._load_config("config.json")
+  def test_supervisor_agent_uses_dataclass_config(self) -> None:
+    """Test that SupervisorAgent uses dataclass configuration"""
+    config = development_config()
+    agent = SupervisorAgent(config=config)
+    
+    assert isinstance(agent.config, SupervisorConfig)
+    assert agent.config.model.name == config.model.name
+    assert agent.config.agent.max_iterations == config.agent.max_iterations
 
   def test_timestamp_format(self) -> None:
     """Test timestamp method returns correct format"""
@@ -161,76 +107,42 @@ class TestSupervisorAgent:
   @patch('claude_code_supervisor.supervisor.ChatOpenAI')
   def test_initialize_llm(self, mock_chat_openai) -> None:
     """Test LLM initialization"""
-    mock_config = {
-      "model": {"name": "gpt-4o", "temperature": 0.1}
-    }
+    config = development_config()
 
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    agent.config = mock_config
+    agent.config = config
 
     agent._initialize_llm()
 
     mock_chat_openai.assert_called_once_with(
-      model="gpt-4o",
-      temperature=0.1
+      model=config.model.name,
+      temperature=config.model.temperature
     )
 
   def test_supervisor_agent_init_with_provided_llm(self) -> None:
     """Test SupervisorAgent initialization with provided LLM (BYOM)"""
     from langchain_openai import ChatOpenAI
-    import tempfile
-    import json
-    import os
     
     # Create a custom LLM
     custom_llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.5)
+    config = development_config()
     
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 3,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py"
-        },
-        "claude_code": {"use_bedrock": False}
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
-      
-      # Initialize with custom LLM
-      agent = SupervisorAgent(config_path, llm=custom_llm)
-      
-      # Should use the provided LLM, not create a new one from config
-      assert agent.llm is custom_llm
+    # Initialize with custom LLM
+    agent = SupervisorAgent(config=config, llm=custom_llm)
+    
+    # Should use the provided LLM, not create a new one from config
+    assert agent.llm is custom_llm
     
   def test_supervisor_agent_init_without_provided_llm(self) -> None:
     """Test that SupervisorAgent falls back to config when no LLM provided"""
-    import tempfile
-    import json
-    import os
+    config = development_config()
     
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1, "provider": "openai"},
-        "agent": {
-          "max_iterations": 3,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py"
-        },
-        "claude_code": {"use_bedrock": False}
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
-      
-      # Initialize without custom LLM
-      agent = SupervisorAgent(config_path)
-      
-      # Should create LLM from config
-      assert agent.llm is not None
-      assert hasattr(agent.llm, 'model_name')
+    # Initialize without custom LLM
+    agent = SupervisorAgent(config=config)
+    
+    # Should create LLM from config
+    assert agent.llm is not None
+    assert hasattr(agent.llm, 'model_name')
 
   @patch('claude_code_supervisor.supervisor.ChatOpenAI')
   def test_call_llm_success(self, mock_chat_openai) -> None:
@@ -270,19 +182,9 @@ class TestSupervisorAgent:
     """Test Claude Code initialization with Anthropic provider"""
     mock_getenv.return_value = "test-api-key"
 
+    config = development_config()
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    agent.config = {
-      "claude_code": {
-        "provider": "anthropic",
-        "use_bedrock": False,
-        "working_directory": "/test/path",
-        "javascript_runtime": "node",
-        "executable_args": ["--verbose"],
-        "claude_code_path": "/usr/local/bin/claude-code",
-        "max_turns": 20,
-        "max_thinking_tokens": 8000
-      }
-    }
+    agent.config = config
     agent.custom_prompt = None
     agent._timestamp = Mock(return_value="12:00:00")
 
@@ -293,21 +195,19 @@ class TestSupervisorAgent:
     # Verify that base_claude_options was created
     assert hasattr(agent, 'base_claude_options')
     assert agent.base_claude_options.permission_mode == 'acceptEdits'
-    assert agent.base_claude_options.max_turns == 20
-    assert agent.base_claude_options.max_thinking_tokens == 8000
+    assert agent.base_claude_options.max_turns == config.claude_code.max_turns
+    assert agent.base_claude_options.max_thinking_tokens == config.claude_code.max_thinking_tokens
     # Verify default system prompt
     assert "You are an expert Python developer" in agent.base_claude_options.system_prompt
 
   @patch('claude_code_supervisor.supervisor.os.environ')
   def test_initialize_claude_code_bedrock(self, mock_environ) -> None:
     """Test Claude Code initialization with Bedrock provider"""
+    config = development_config()
+    config.claude_code.use_bedrock = True
+    
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    agent.config = {
-      "claude_code": {
-        "provider": "anthropic",
-        "use_bedrock": True
-      }
-    }
+    agent.config = config
     agent.custom_prompt = None
 
     agent._initialize_claude_code()
@@ -319,15 +219,9 @@ class TestSupervisorAgent:
     """Test Claude Code initialization with custom prompt"""
     mock_getenv.return_value = "test-api-key"
 
+    config = development_config()
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    agent.config = {
-      "claude_code": {
-        "provider": "anthropic",
-        "use_bedrock": False,
-        "max_turns": 20,
-        "max_thinking_tokens": 8000
-      }
-    }
+    agent.config = config
     agent.custom_prompt = "Always use type hints and add comprehensive docstrings"
     agent._timestamp = Mock(return_value="12:00:00")
 
@@ -369,7 +263,7 @@ class TestSupervisorAgent:
   def test_should_continue_monitoring_solved(self) -> None:
     """Test _should_continue_monitoring when problem is solved and files exist"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    agent.config = {"claude_code": {}}
+    agent.config = development_config()
     state = AgentState(problem_description="test", is_solved=True)
 
     with patch('os.path.exists', return_value=True):
@@ -379,7 +273,7 @@ class TestSupervisorAgent:
   def test_should_continue_monitoring_max_iterations(self) -> None:
     """Test _should_continue_monitoring when max iterations reached"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    agent.config = {"claude_code": {}}
+    agent.config = development_config()
     state = AgentState(
       problem_description="test",
       is_solved=False,
@@ -393,7 +287,7 @@ class TestSupervisorAgent:
   def test_should_continue_monitoring_need_guidance(self) -> None:
     """Test _should_continue_monitoring when guidance is needed"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    agent.config = {"claude_code": {}}
+    agent.config = development_config()
     state = AgentState(
       problem_description="test",
       is_solved=False,
@@ -499,11 +393,11 @@ class TestSupervisorAgent:
     mock_subprocess.return_value = mock_result
 
     agent = SupervisorAgent.__new__(SupervisorAgent)
+    agent.config = development_config()
     state = AgentState(
       problem_description="test",
       solution_path="solution.py",
-      test_path="test_solution.py",
-      config={"agent": {"test_timeout": 30}}
+      test_path="test_solution.py"
     )
 
     result_state = agent._run_tests(state)
@@ -525,11 +419,11 @@ class TestSupervisorAgent:
     mock_subprocess.return_value = mock_result
 
     agent = SupervisorAgent.__new__(SupervisorAgent)
+    agent.config = development_config()
     state = AgentState(
       problem_description="test",
       solution_path="solution.py",
-      test_path="test_solution.py",
-      config={"agent": {"test_timeout": 30}}
+      test_path="test_solution.py"
     )
 
     result_state = agent._run_tests(state)
