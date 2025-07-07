@@ -30,7 +30,7 @@ class ClaudeCodeConfig:
   claude_code_path: str | None = None
   session_timeout_seconds: int = 300
   activity_timeout_seconds: int = 180
-  max_turns: int = 20
+  max_turns: int | None = 20
   max_thinking_tokens: int = 8000
 
 

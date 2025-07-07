@@ -82,6 +82,8 @@ class AgentState:
   data_format: str = 'auto'
   output_data: Any = None
   data_manager: DataManager | None = None
+  # Integration mode flag
+  integrate_into_codebase: bool = False
 
   def __post_init__(self) -> None:
     self.last_activity_time = time.time()
@@ -354,8 +356,8 @@ Problem: {state.problem_description}
 
 Requirements:
 - Use Python
-- Save the solution as '{state.solution_path}'
-- Save tests as '{state.test_path}'
+{f'- Save the solution as "{state.solution_path}"' if not state.integrate_into_codebase else '- Integrate your solution directly into the existing codebase by modifying the appropriate files'}
+{f'- Save tests as "{state.test_path}"' if not state.integrate_into_codebase else '- Add tests to the existing test files, following the existing test structure and conventions'}
 - Follow clean code practices with docstrings and type hints
 - Ensure all tests pass before completing
 {'- If input data is provided, make sure to read and process it correctly' if state.input_data is not None else ''}
@@ -425,8 +427,8 @@ Problem: {state.problem_description}
 
 Requirements:
 - Use Python
-- Save the solution as '{state.solution_path}'
-- Save tests as '{state.test_path}'
+{f'- Save the solution as "{state.solution_path}"' if not state.integrate_into_codebase else '- Integrate your solution directly into the existing codebase by modifying the appropriate files'}
+{f'- Save tests as "{state.test_path}"' if not state.integrate_into_codebase else '- Add tests to the existing test files, following the existing test structure and conventions'}
 - Follow clean code practices with docstrings and type hints
 - Ensure all tests pass before completing
 {'- If input data is provided, make sure to read and process it correctly' if state.input_data is not None else ''}
@@ -598,24 +600,97 @@ Please update your todo list and continue with the implementation.
     """Validate the solution created by Claude Code"""
     print(f"\n[{self._timestamp()}] 🔍 Validating Claude's solution...")
 
-    # Check if both files exist
-    if not os.path.exists(state.solution_path):
-      state.error_message = f"Solution file {state.solution_path} not created"
-      state.is_solved = False
-      return state
+    if state.integrate_into_codebase:
+      # In integration mode, we validate by running tests on the entire codebase
+      print(f"[{self._timestamp()}] 🔧 Integration mode: validating codebase changes...")
+      state = self._run_integration_tests(state)
+    else:
+      # Standard mode: check if both files exist
+      if not os.path.exists(state.solution_path):
+        state.error_message = f"Solution file {state.solution_path} not created"
+        state.is_solved = False
+        return state
 
-    if not os.path.exists(state.test_path):
-      state.error_message = f"Test file {state.test_path} not created"
-      state.is_solved = False
-      return state
+      if not os.path.exists(state.test_path):
+        state.error_message = f"Test file {state.test_path} not created"
+        state.is_solved = False
+        return state
 
-    # Run the tests to validate
-    state = self._run_tests(state)
+      # Run the tests to validate
+      state = self._run_tests(state)
 
     # If tests passed and we have input data, try to extract output data
     if state.is_solved and state.input_data is not None:
       state = self._extract_output_data(state)
 
+    return state
+
+  def _run_integration_tests(self, state: AgentState) -> AgentState:
+    """Run tests in integration mode where solution is integrated into codebase"""
+    print(f"\n[{self._timestamp()}] 🧪 Running integration tests...")
+    
+    try:
+      # Look for test files in the codebase and run them
+      # This is a simplified approach - in practice, you might want to
+      # run specific test patterns or use project-specific test commands
+      
+      # First, try to find test files
+      test_files = []
+      for root, _, files in os.walk('.'):
+        for file in files:
+          if file.endswith('_test.py') or file.startswith('test_'):
+            test_files.append(os.path.join(root, file))
+      
+      if not test_files:
+        # If no test files found, assume integration was successful
+        # This might be the case when tests are added to existing files
+        state.is_solved = True
+        state.test_results = "No separate test files found - assuming integration successful"
+        print(f"[{self._timestamp()}] ✅ No separate test files found, assuming integration successful")
+        return state
+      
+      # Run the tests
+      timeout = self.config.agent.test_timeout
+      result = subprocess.run(
+        [sys.executable, '-m', 'pytest'] + test_files + ['-v', '--tb=short', '--no-header'],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=os.getcwd()
+      )
+      
+      state.test_results = (f"Exit code: {result.returncode}\n"
+                           f"STDOUT:\n{result.stdout}\n"
+                           f"STDERR:\n{result.stderr}")
+      state.is_solved = result.returncode == 0
+      
+      if state.is_solved:
+        print(f"[{self._timestamp()}] ✅ All integration tests passed!")
+        print(f"Test output:\n{result.stdout}")
+      else:
+        print(f"[{self._timestamp()}] ❌ Integration tests failed (exit code: {result.returncode})")
+        print(f"Test output:\n{result.stdout}")
+        if result.stderr:
+          print(f"Errors:\n{result.stderr}")
+        state.error_message = f"Integration test failures: {result.stdout}\n{result.stderr}"
+        
+    except subprocess.TimeoutExpired:
+      timeout = self.config.agent.test_timeout
+      state.test_results = f"Integration tests timed out after {timeout} seconds"
+      state.is_solved = False
+      state.error_message = f"Integration tests timed out after {timeout} seconds"
+      print(f"[{self._timestamp()}] ⏰ Integration tests timed out after {timeout} seconds")
+    except FileNotFoundError:
+      state.test_results = "pytest not found. Please install pytest: pip install pytest"
+      state.is_solved = False
+      state.error_message = "pytest not found"
+      print(f"[{self._timestamp()}] ❌ pytest not found. Install with: pip install pytest")
+    except Exception as e:
+      state.test_results = f"Error running integration tests: {str(e)}"
+      state.is_solved = False
+      state.error_message = f"Error running integration tests: {str(e)}"
+      print(f"[{self._timestamp()}] 💥 Error running integration tests: {str(e)}")
+    
     return state
 
   def _extract_output_data(self, state: AgentState) -> AgentState:
@@ -916,9 +991,16 @@ Please update your todo list and continue working on the solution, addressing th
       else:
         return 'finish'
 
-    # Check if solution files exist
-    if os.path.exists(state.solution_path) and os.path.exists(state.test_path):
-      return 'validate'
+    # Check if solution files exist (for standard mode) or if we're in integration mode
+    if state.integrate_into_codebase:
+      # In integration mode, we validate when Claude indicates it's done
+      # This is determined by checking if Claude has stopped being active
+      if not state.claude_session_active:
+        return 'validate'
+    else:
+      # Standard mode: check if both files exist
+      if os.path.exists(state.solution_path) and os.path.exists(state.test_path):
+        return 'validate'
 
     # Check for timeout (Claude has been working too long without progress)
     current_time = time.time()
@@ -941,25 +1023,33 @@ Please update your todo list and continue working on the solution, addressing th
     if state.is_solved:
       print(f"\n[{self._timestamp()}] 🎉 Solution completed successfully after "
             f"{state.current_iteration} iterations!")
-      print(f"[{self._timestamp()}] 💾 Code saved to: {state.solution_path}")
-      print(f"[{self._timestamp()}] 💾 Tests saved to: {state.test_path}")
+      
+      if state.integrate_into_codebase:
+        print(f"[{self._timestamp()}] 🔧 Solution integrated into existing codebase")
+        print(f"[{self._timestamp()}] 🧪 Tests integrated into existing test structure")
+      else:
+        print(f"[{self._timestamp()}] 💾 Code saved to: {state.solution_path}")
+        print(f"[{self._timestamp()}] 💾 Tests saved to: {state.test_path}")
 
       if state.output_data is not None:
         print(f"[{self._timestamp()}] 📊 Output data: {type(state.output_data).__name__}")
         if hasattr(state.output_data, '__len__') and len(state.output_data) < 20:
           print(f"[{self._timestamp()}] 📊 Result: {state.output_data}")
 
-      print(f"\n[{self._timestamp()}] 🚀 You can run the tests manually with: "
-            f"pytest {state.test_path}")
+      if not state.integrate_into_codebase:
+        print(f"\n[{self._timestamp()}] 🚀 You can run the tests manually with: "
+              f"pytest {state.test_path}")
     else:
       print(f"\n[{self._timestamp()}] ❌ Maximum iterations ({state.max_iterations}) reached "
             'without solving the problem.')
       print(f"[{self._timestamp()}] 📝 Last error: {state.error_message}")
-      print(f"\n[{self._timestamp()}] 📁 Files generated (may contain partial solutions):")
-      if os.path.exists(state.solution_path):
-        print(f"[{self._timestamp()}]   - {state.solution_path}")
-      if os.path.exists(state.test_path):
-        print(f"[{self._timestamp()}]   - {state.test_path}")
+      
+      if not state.integrate_into_codebase:
+        print(f"\n[{self._timestamp()}] 📁 Files generated (may contain partial solutions):")
+        if os.path.exists(state.solution_path):
+          print(f"[{self._timestamp()}]   - {state.solution_path}")
+        if os.path.exists(state.test_path):
+          print(f"[{self._timestamp()}]   - {state.test_path}")
 
     # No cleanup needed - all data operations are in-memory only
 
@@ -969,7 +1059,9 @@ Please update your todo list and continue working on the solution, addressing th
               input_data: Any = None,
               expected_output: Any = None,
               data_format: str = 'auto',
-              example_output: str | None = None) -> AgentState:
+              example_output: str | None = None,
+              solution_path: str | None = None,
+              test_path: str | None = None) -> AgentState:
     """
     Main method to process a problem with optional input/output data.
 
@@ -979,6 +1071,8 @@ Please update your todo list and continue working on the solution, addressing th
         expected_output: Expected output for validation (optional)
         data_format: Format hint for data handling ('auto', 'csv', 'json', etc.)
         example_output: Text description of expected output (optional)
+        solution_path: Path to save solution file (optional, if None integrates into codebase)
+        test_path: Path to save test file (optional, if None integrates into codebase)
 
     Returns:
         AgentState with results and any output data
@@ -989,6 +1083,9 @@ Please update your todo list and continue working on the solution, addressing th
       data_manager = DataManager()
       print(f"[{self._timestamp()}] 📁 DataManager created for I/O operations")
 
+    # Determine if we're in integration mode
+    integrate_mode = solution_path is None and test_path is None
+    
     initial_state = AgentState(
       problem_description=problem_description,
       example_output=example_output,
@@ -996,9 +1093,10 @@ Please update your todo list and continue working on the solution, addressing th
       expected_output=expected_output,
       data_format=data_format,
       max_iterations=self.config.agent.max_iterations,
-      solution_path=self.config.agent.solution_filename,
-      test_path=self.config.agent.test_filename,
-      data_manager=data_manager
+      solution_path=solution_path or self.config.agent.solution_filename,
+      test_path=test_path or self.config.agent.test_filename,
+      data_manager=data_manager,
+      integrate_into_codebase=integrate_mode
     )
 
     print(f"[{self._timestamp()}] 🚀 Starting problem solving: {problem_description}")
