@@ -52,8 +52,8 @@ def main():
 
   if result.is_solved:
     print('✓ Problem solved successfully!')
-    print(f'Solution file: {result.solution_path}')
-    print(f'Test file: {result.test_path}')
+    print(f'Solution file: {agent.solution_path}')
+    print(f'Test file: {agent.test_path}')
     print(f'Iterations: {result.current_iteration}')
 
     if result.test_results:
@@ -63,11 +63,11 @@ def main():
     print('✗ Problem not solved')
     if result.error_message:
       print(f'Error: {result.error_message}')
-    print(f'Completed iterations: {result.current_iteration}/{result.max_iterations}')
+    print(f'Completed iterations: {result.current_iteration}/{agent.config.agent.max_iterations}')
 
-  # Show guidance messages if any
-  if result.guidance_messages:
-    print(f'\nGuidance provided: {len(result.guidance_messages)} times')
+  # Show latest guidance if any
+  if result.latest_guidance:
+    print(f'\nLatest guidance: {result.latest_guidance}')
 
 
 if __name__ == '__main__':

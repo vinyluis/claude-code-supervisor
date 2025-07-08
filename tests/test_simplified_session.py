@@ -5,7 +5,7 @@ Tests for simplified session handling without custom timeouts.
 import pytest
 from unittest.mock import Mock, patch
 
-from claude_code_supervisor import SupervisorAgent, AgentState
+from claude_code_supervisor import SupervisorAgent, WorkflowState
 from claude_code_supervisor.config import development_config
 
 
@@ -49,15 +49,14 @@ class TestSimplifiedSession:
         agent = SupervisorAgent.__new__(SupervisorAgent)
         agent.config = development_config()
         agent._timestamp = Mock(return_value="12:00:00")
+        agent.solution_path = "solution.py"
+        agent.test_path = "test_solution.py"
         
         # Mock the required attributes
         from claude_code_sdk import ClaudeCodeOptions
         agent.base_claude_options = ClaudeCodeOptions()
         
-        state = AgentState(
-            problem_description="Test problem",
-            solution_path="solution.py",
-            test_path="test_solution.py",
+        state = WorkflowState(
             claude_session_active=True
         )
         
@@ -71,24 +70,25 @@ class TestSimplifiedSession:
         mock_anyio_run.assert_called_once()
         
         # Result should be valid
-        assert isinstance(result, AgentState)
+        assert isinstance(result, WorkflowState)
 
     def test_decision_logic_no_activity_timeout(self):
         """Test that decision logic no longer checks activity timeout"""
         agent = SupervisorAgent.__new__(SupervisorAgent)
         agent.config = development_config()
         agent._timestamp = Mock(return_value="12:00:00")
+        agent.integrate_into_codebase = False
+        agent.solution_path = "solution.py"
+        agent.test_path = "test_solution.py"
         
-        state = AgentState(
-            problem_description="Test problem",
+        state = WorkflowState(
             current_iteration=1,
-            max_iterations=5,
-            claude_session_active=False,
-            last_activity_time=0  # Very old timestamp
+            claude_session_active=False
         )
         
-        # Should not timeout based on activity - this check was removed
-        result = agent._decide_next_action(state)
+        # Should not timeout based on activity - this check was removed  
+        with patch('os.path.exists', return_value=False):
+            result = agent._decide_next_action(state)
         
         # Should provide guidance instead of timing out
         assert result in ['guide', 'finish']
@@ -99,30 +99,29 @@ class TestSimplifiedSession:
         agent = SupervisorAgent.__new__(SupervisorAgent)
         agent.config = development_config()
         agent._timestamp = Mock(return_value="12:00:00")
+        agent.solution_path = "solution.py"
+        agent.test_path = "test_solution.py"
         
         # Mock the required attributes
         from claude_code_sdk import ClaudeCodeOptions
         agent.base_claude_options = ClaudeCodeOptions()
         
-        state = AgentState(
-            problem_description="Test problem",
-            solution_path="solution.py",  
-            test_path="test_solution.py",
+        state = WorkflowState(
             claude_session_active=True
         )
         
         # Mock the prompt from log
         state.claude_output_log = ["PROMPT_ITERATION_0: Test prompt"]
         
-        # Test with a mock that raises an async error
+        # Test with a mock that raises a real error (not cancel scope)
         with patch('anyio.run') as mock_run:
-            mock_run.side_effect = Exception("cancel scope error")
+            mock_run.side_effect = Exception("real error")
             
             result = agent._execute_claude_session(state)
             
             # Should handle the error gracefully
             assert result.error_message  # Should have error message
-            assert "cancel scope error" in result.error_message
+            assert "real error" in result.error_message
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

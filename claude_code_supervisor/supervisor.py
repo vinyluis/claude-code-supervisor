@@ -34,11 +34,9 @@ Usage:
 import os
 import sys
 import subprocess
-import asyncio
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
-import time
 from typing import Any
 from langchain_core.language_models.base import BaseLanguageModel
 
@@ -64,37 +62,24 @@ warnings.filterwarnings("ignore", message=".*cancel scope in a different task.*"
 
 
 @dataclass
-class AgentState:
-  """State for the supervisor agent"""
-  problem_description: str
-  example_output: str | None = None
+class WorkflowState:
+  """Dynamic state that changes during workflow execution"""
+  # Workflow progress
   current_iteration: int = 0
-  max_iterations: int = 5
-  test_results: str = ""
-  solution_path: str = ""
-  test_path: str = ""
   is_solved: bool = False
   error_message: str = ""
-  guidance_messages: list = field(default_factory=list)
-  should_terminate_early: bool = False
-  # Session tracking fields
+  test_results: str = ""
+  
+  # Claude session state
   claude_session_id: str | None = None
   claude_session_active: bool = False
   claude_todos: list[dict] = field(default_factory=list)
   claude_output_log: list[str] = field(default_factory=list)
-  guidance_provided: bool = False
-  last_activity_time: float = 0.0
-  # Data I/O fields
-  input_data: Any = None
-  expected_output: Any = None
-  data_format: str = 'auto'
+  should_terminate_early: bool = False
+  latest_guidance: str = ""
+  
+  # Output data (dynamic - extracted during execution)
   output_data: Any = None
-  data_manager: DataManager | None = None
-  # Integration mode flag
-  integrate_into_codebase: bool = False
-
-  def __post_init__(self) -> None:
-    self.last_activity_time = time.time()
 
   def to_dict(self) -> dict:
     return dataclasses.asdict(self)
@@ -189,6 +174,17 @@ class SupervisorAgent:
     self.custom_prompt = custom_prompt
     self._initialize_claude_code()
     self.graph = self._build_graph()
+    
+    # Static workflow configuration (set once per process call)
+    self.problem_description: str = ""
+    self.example_output: str | None = None
+    self.solution_path: str = ""
+    self.test_path: str = ""
+    self.input_data: Any = None
+    self.expected_output: Any = None
+    self.data_format: str = 'auto'
+    self.data_manager: DataManager | None = None
+    self.integrate_into_codebase: bool = False
 
     # Check for credentials on the kwargs
     if 'aws_access_key_id' in kwargs:
@@ -259,7 +255,7 @@ class SupervisorAgent:
 
   def _build_graph(self):
     """Build the LangGraph workflow"""
-    workflow = StateGraph(AgentState)
+    workflow = StateGraph(WorkflowState)
 
     workflow.add_node("initiate_claude", self._initiate_claude_code_session)
     workflow.add_node("execute_claude", self._execute_claude_session)
@@ -329,23 +325,23 @@ class SupervisorAgent:
     else:
       raise ValueError(f"Unsupported model provider: {provider}. Supported providers are 'openai' and 'bedrock'.")
 
-  def _initiate_claude_code_session(self, state: AgentState) -> AgentState:
+  def _initiate_claude_code_session(self, state: WorkflowState) -> WorkflowState:
     """Prepare the initial setup for Claude Code session"""
     print(f"\n[{self._timestamp()}] 🚀 Setting up Claude Code session...")
 
     # Handle input data if provided
     input_data_info = ""
-    if state.input_data is not None and state.data_manager is not None:
+    if self.input_data is not None and self.data_manager is not None:
       try:
         print(f"[{self._timestamp()}] 📊 Processing input data...")
 
         # Get data description and format
-        data_format = state.data_format if state.data_format != 'auto' else state.data_manager.infer_format(state.input_data)
-        data_description = state.data_manager.get_data_description(state.input_data, data_format)
-        data_context = state.data_manager.serialize_for_context(state.input_data, data_format)
+        data_format = self.data_format if self.data_format != 'auto' else self.data_manager.infer_format(self.input_data)
+        data_description = self.data_manager.get_data_description(self.input_data, data_format)
+        data_context = self.data_manager.serialize_for_context(self.input_data, data_format)
 
         # Record the operation
-        state.data_manager.record_operation(state.input_data, data_format, 'input')
+        self.data_manager.record_operation(self.input_data, data_format, 'input')
 
         input_data_info = f"""
 Input Data Available:
@@ -364,10 +360,10 @@ The input data is available in your solution as a variable. You can access it di
 
     # Prepare the problem statement for Claude Code
     expected_output_info = ""
-    if state.expected_output is not None:
-      expected_output_info = f"\nExpected output format: {type(state.expected_output).__name__}"
-      if hasattr(state.expected_output, '__len__') and len(state.expected_output) < 10:
-        expected_output_info += f"\nExpected result example: {state.expected_output}"
+    if self.expected_output is not None:
+      expected_output_info = f"\nExpected output format: {type(self.expected_output).__name__}"
+      if hasattr(self.expected_output, '__len__') and len(self.expected_output) < 10:
+        expected_output_info += f"\nExpected result example: {self.expected_output}"
 
     # Build the initial prompt
     if state.current_iteration == 0:
@@ -379,27 +375,27 @@ I need you to solve this programming problem step by step. Please:
 3. Create comprehensive tests for your solution
 4. Run the tests to verify everything works
 
-Problem: {state.problem_description}
-{f'Expected behavior: {state.example_output}' if state.example_output else ''}
+Problem: {self.problem_description}
+{f'Expected behavior: {self.example_output}' if self.example_output else ''}
 {expected_output_info}
 {input_data_info}
 
 Requirements:
 - Use Python
-{f'- Save the solution as "{state.solution_path}"' if not state.integrate_into_codebase else '- Integrate your solution directly into the existing codebase by modifying the appropriate files'}
-{f'- Save tests as "{state.test_path}"' if not state.integrate_into_codebase else '- Add tests to the existing test files, following the existing test structure and conventions'}
+{f'- Save the solution as "{self.solution_path}"' if not self.integrate_into_codebase else '- Integrate your solution directly into the existing codebase by modifying the appropriate files'}
+{f'- Save tests as "{self.test_path}"' if not self.integrate_into_codebase else '- Add tests to the existing test files, following the existing test structure and conventions'}
 - Follow clean code practices with docstrings and type hints
 - Ensure all tests pass before completing
-{'- If input data is provided, make sure to read and process it correctly' if state.input_data is not None else ''}
-{'- Return results in the same format as the expected output' if state.expected_output is not None else ''}
+{'- If input data is provided, make sure to read and process it correctly' if self.input_data is not None else ''}
+{'- Return results in the same format as the expected output' if self.expected_output is not None else ''}
 
 Please start by creating a todo list to plan your approach, then implement the solution.
 """
     else:
       # Subsequent iterations - provide guidance
       latest_guidance = ""
-      if state.guidance_messages:
-        latest_guidance = state.guidance_messages[-1]['guidance']
+      if state.latest_guidance:
+        latest_guidance = state.latest_guidance
 
       problem_prompt = f"""\
 {latest_guidance if latest_guidance else 'Continue working on the problem based on the previous feedback.'}
@@ -410,14 +406,65 @@ Please update your todo list and continue with the implementation.
     # Store the prompt for the execution phase
     state.claude_output_log = [f"PROMPT_ITERATION_{state.current_iteration}: {problem_prompt}"]
     state.claude_session_active = True
-    state.last_activity_time = time.time()
     
     print(f"[{self._timestamp()}] 📝 Prepared prompt for iteration {state.current_iteration}")
     print(f"[{self._timestamp()}] Working directory: {os.getcwd()}")
 
     return state
 
-  def _execute_claude_session(self, state: AgentState) -> AgentState:
+  async def _run_claude_session(self, problem_prompt: str, options: ClaudeCodeOptions, state: WorkflowState) -> None:
+    """Simplified async session execution following SDK best practices"""
+    try:
+      # Simple async iteration as recommended in SDK docs
+      async for message in query(prompt=problem_prompt, options=options):
+            
+        if isinstance(message, AssistantMessage):
+          for block in message.content:
+            if isinstance(block, TextBlock):
+              state.claude_output_log.append(block.text)
+              print(f"[{self._timestamp()}] 💬 {utils.blue('Claude:')} {utils.blue(block.text[:200] + ('...' if len(block.text) > 200 else ''))}")
+            
+            elif isinstance(block, ToolUseBlock):
+              tool_info = utils.get_tool_info(block.name, block.input)
+              print(f"[{self._timestamp()}] 🔧 {utils.blue('Tool:')} {utils.blue(block.name)} {tool_info}")
+              
+              # Track todo updates
+              if block.name == 'TodoWrite':
+                todos = block.input.get('todos', [])
+                state.claude_todos = todos
+                print(f"[{self._timestamp()}] 📋 {utils.blue('Todo list updated:')} {utils.blue(str(len(todos)) + ' items')}")
+                for todo in todos:
+                  status_emoji = {'pending': '⏳', 'in_progress': '🔄', 'completed': '✅'}.get(todo.get('status'), '❓')
+                  print(f"[{self._timestamp()}]   {status_emoji} {utils.blue(todo.get('content', 'Unknown task'))}")
+            
+            elif isinstance(block, ToolResultBlock):
+              if block.is_error:
+                error_msg = f"Tool error: {block.content}"
+                print(f"[{self._timestamp()}] ❌ {utils.red(error_msg)}")
+                if not state.error_message:
+                  state.error_message = error_msg
+        
+        elif isinstance(message, ResultMessage):
+          # Session completed successfully
+          state.claude_session_id = message.session_id
+          print(f"[{self._timestamp()}] ✅ {utils.green('Claude session completed')} (ID: {message.session_id})")
+          print(f"[{self._timestamp()}] {utils.cyan('Turns:')} {message.num_turns}, {utils.cyan('Duration:')} {message.duration_ms}ms")
+          if message.total_cost_usd:
+            print(f"[{self._timestamp()}] {utils.cyan('Cost:')} ${message.total_cost_usd:.4f}")
+          break
+        
+        elif isinstance(message, SystemMessage):
+          print(f"[{self._timestamp()}] ℹ️  System: {message.subtype}")
+    
+    except Exception as e:
+      # Let SDK handle its own errors - only handle real failures
+      error_msg = f"Error in Claude session: {e}"
+      print(f"[{self._timestamp()}] ❌ {error_msg}")
+      if not state.error_message:
+        state.error_message = error_msg
+      raise
+
+  def _execute_claude_session(self, state: WorkflowState) -> WorkflowState:
     """Execute a Claude Code session until completion or timeout"""
     if not state.claude_session_active:
       state.error_message = "Claude session not active"
@@ -449,114 +496,20 @@ Please update your todo list and continue with the implementation.
         resume=state.claude_session_id if state.claude_session_id else None
       )
 
-      # Execute Claude Code session with timeout
-      session_complete = False
-      current_todos = []
-      text_responses = []
-      tool_calls = []
-      error_details = []
-
-      async def execute_claude_session():
-        nonlocal session_complete, current_todos, text_responses, tool_calls, error_details
-
-        try:
-          # Execute Claude Code session - let SDK handle its own timeouts
-          query_stream = query(prompt=problem_prompt, options=options)
-          try:
-            async for message in query_stream:
-              state.last_activity_time = time.time()
-
-              if isinstance(message, AssistantMessage):
-                for block in message.content:
-                  if isinstance(block, TextBlock):
-                    text_responses.append(block.text)
-                    print(f"[{self._timestamp()}] 💬 {utils.blue('Claude:')} {utils.blue(block.text[:200] + ('...' if len(block.text) > 200 else ''))}")
-                  elif isinstance(block, ToolUseBlock):
-                    tool_calls.append(f"{block.name}: {block.input}")
-                    
-                    # Provide detailed information about the tool being used
-                    tool_info = utils.get_tool_info(block.name, block.input)
-                    print(f"[{self._timestamp()}] 🔧 {utils.blue('Tool:')} {utils.blue(block.name)} {tool_info}")
-
-                    # Track todo updates
-                    if block.name == 'TodoWrite':
-                      todos = block.input.get('todos', [])
-                      current_todos = todos
-                      print(f"[{self._timestamp()}] 📋 {utils.blue('Todo list updated:')} {utils.blue(str(len(todos)) + ' items')}")
-                      for todo in todos:
-                        status_emoji = {'pending': '⏳', 'in_progress': '🔄', 'completed': '✅'}.get(todo.get('status'), '❓')
-                        print(f"[{self._timestamp()}]   {status_emoji} {utils.blue(todo.get('content', 'Unknown task'))}")
-
-                  elif isinstance(block, ToolResultBlock):
-                    if block.is_error:
-                      error_msg = f"Tool error: {block.content}"
-                      error_details.append(error_msg)
-                      print(f"[{self._timestamp()}] ❌ {utils.red(error_msg)}")
-
-              elif isinstance(message, ResultMessage):
-                # Session completed
-                state.claude_session_id = message.session_id
-                session_complete = True
-                print(f"[{self._timestamp()}] ✅ {utils.green('Claude session completed')} (ID: {message.session_id})")
-                print(f"[{self._timestamp()}] {utils.cyan('Turns:')} {message.num_turns}, {utils.cyan('Duration:')} {message.duration_ms}ms")
-                if message.total_cost_usd:
-                  print(f"[{self._timestamp()}] {utils.cyan('Cost:')} ${message.total_cost_usd:.4f}")
-                break
-
-              elif isinstance(message, SystemMessage):
-                print(f"[{self._timestamp()}] ℹ️  System: {message.subtype}")
-
-          except asyncio.CancelledError:
-            # Handle cancellation gracefully
-            print(f"[{self._timestamp()}] 🛑 Claude session was cancelled")
-            session_complete = True
-            return  # Exit gracefully without re-raising
-          except Exception as e:
-            error_msg = f"Error in query stream: {e}"
-            error_details.append(error_msg)
-            print(f"[{self._timestamp()}] ❌ {error_msg}")
-            session_complete = True
-            return
-          finally:
-            # Ensure the async generator is properly closed
-            try:
-              # For async iterators, just pass - they clean up automatically
-              pass
-            except Exception:
-              # Ignore cleanup errors
-              pass
-
-        except Exception as e:
-          error_msg = f"Error in Claude session: {e}"
-          error_details.append(error_msg)
-          print(f"[{self._timestamp()}] ❌ {error_msg}")
-          session_complete = True  # Mark as complete to exit
-        finally:
-          # Ensure proper cleanup
-          session_complete = True
-
-      # Run the async session using the SDK's built-in timeout mechanisms
+      # Execute Claude Code session - simplified approach
       try:
         import anyio
-        anyio.run(execute_claude_session)
+        anyio.run(self._run_claude_session, problem_prompt, options, state)
       except Exception as e:
         error_msg = f"Error in async session execution: {e}"
-        error_details.append(error_msg)
         print(f"[{self._timestamp()}] ❌ {error_msg}")
         # Let the SDK handle its own errors - only store real errors
         if "cancel scope" not in str(e).lower() and "task exception" not in str(e).lower():
+          state.error_message = error_msg
           raise
 
-      # Mark session as inactive after completion or timeout
-      state.claude_session_active = not session_complete
-
-      # Update state with results
-      state.claude_todos = current_todos
-      state.claude_output_log.extend(text_responses)
-      
-      # Store any errors that occurred
-      if error_details:
-        state.error_message = "; ".join(error_details)
+      # Mark session as inactive after completion
+      state.claude_session_active = False
 
       return state
 
@@ -566,18 +519,18 @@ Please update your todo list and continue with the implementation.
       print(f"[{self._timestamp()}] ❌ Error executing Claude session: {e}")
       return state
 
-  def _collect_session_results(self, state: AgentState) -> AgentState:
+  def _collect_session_results(self, state: WorkflowState) -> WorkflowState:
     """Collect and analyze the results from Claude's session"""
     print(f"\n[{self._timestamp()}] 📊 Collecting session results...")
 
     # Check if files were created
-    solution_exists = os.path.exists(state.solution_path) if state.solution_path else False
-    test_exists = os.path.exists(state.test_path) if state.test_path else False
+    solution_exists = os.path.exists(self.solution_path) if self.solution_path else False
+    test_exists = os.path.exists(self.test_path) if self.test_path else False
 
     if solution_exists:
-      print(f"[{self._timestamp()}] 📄 Solution file detected: {state.solution_path}")
+      print(f"[{self._timestamp()}] 📄 Solution file detected: {self.solution_path}")
     if test_exists:
-      print(f"[{self._timestamp()}] 🧪 Test file detected: {state.test_path}")
+      print(f"[{self._timestamp()}] 🧪 Test file detected: {self.test_path}")
 
     # Analyze todo completion status
     completed_todos = [todo for todo in state.claude_todos if todo.get('status') == 'completed']
@@ -603,7 +556,7 @@ Please update your todo list and continue with the implementation.
 
     return state
 
-  def _decide_next_action(self, state: AgentState) -> str:
+  def _decide_next_action(self, state: WorkflowState) -> str:
     """Decide what to do next based on session results"""
     print(f"\n[{self._timestamp()}] 🤔 Deciding next action...")
 
@@ -613,8 +566,8 @@ Please update your todo list and continue with the implementation.
       return 'finish'
 
     # Check if we've exceeded maximum iterations
-    if state.current_iteration >= state.max_iterations:
-      print(f"[{self._timestamp()}] 🔄 Maximum iterations ({state.max_iterations}) reached")
+    if state.current_iteration >= self.config.agent.max_iterations:
+      print(f"[{self._timestamp()}] 🔄 Maximum iterations ({self.config.agent.max_iterations}) reached")
       return 'finish'
 
     # If there are explicit errors, provide guidance
@@ -623,14 +576,14 @@ Please update your todo list and continue with the implementation.
       return 'guide'
 
     # Check if solution appears complete
-    if state.integrate_into_codebase:
+    if self.integrate_into_codebase:
       # In integration mode, check if Claude indicates completion
       if not state.claude_session_active:
         print(f"[{self._timestamp()}] ✅ Integration mode: session complete, validating")
         return 'validate'
     else:
       # Standard mode: check if both files exist
-      if os.path.exists(state.solution_path) and os.path.exists(state.test_path):
+      if os.path.exists(self.solution_path) and os.path.exists(self.test_path):
         print(f"[{self._timestamp()}] ✅ Both solution and test files exist, validating")
         return 'validate'
 
@@ -647,23 +600,23 @@ Please update your todo list and continue with the implementation.
     return 'guide'
 
 
-  def _validate_solution(self, state: AgentState) -> AgentState:
+  def _validate_solution(self, state: WorkflowState) -> WorkflowState:
     """Validate the solution created by Claude Code"""
     print(f"\n[{self._timestamp()}] 🔍 Validating Claude's solution...")
 
-    if state.integrate_into_codebase:
+    if self.integrate_into_codebase:
       # In integration mode, we validate by running tests on the entire codebase
       print(f"[{self._timestamp()}] 🔧 Integration mode: validating codebase changes...")
       state = self._run_integration_tests(state)
     else:
       # Standard mode: check if both files exist
-      if not os.path.exists(state.solution_path):
-        state.error_message = f"Solution file {state.solution_path} not created"
+      if not os.path.exists(self.solution_path):
+        state.error_message = f"Solution file {self.solution_path} not created"
         state.is_solved = False
         return state
 
-      if not os.path.exists(state.test_path):
-        state.error_message = f"Test file {state.test_path} not created"
+      if not os.path.exists(self.test_path):
+        state.error_message = f"Test file {self.test_path} not created"
         state.is_solved = False
         return state
 
@@ -671,12 +624,12 @@ Please update your todo list and continue with the implementation.
       state = self._run_tests(state)
 
     # If tests passed and we have input data, try to extract output data
-    if state.is_solved and state.input_data is not None:
+    if state.is_solved and self.input_data is not None:
       state = self._extract_output_data(state)
 
     return state
 
-  def _run_integration_tests(self, state: AgentState) -> AgentState:
+  def _run_integration_tests(self, state: WorkflowState) -> WorkflowState:
     """Run tests in integration mode where solution is integrated into codebase"""
     print(f"\n[{self._timestamp()}] 🧪 Running integration tests...")
     
@@ -744,7 +697,7 @@ Please update your todo list and continue with the implementation.
     
     return state
 
-  def _extract_output_data(self, state: AgentState) -> AgentState:
+  def _extract_output_data(self, state: WorkflowState) -> WorkflowState:
     """Extract output data by running the solution with input data"""
     print(f"\n[{self._timestamp()}] 📤 Extracting output data from solution...")
 
@@ -753,9 +706,9 @@ Please update your todo list and continue with the implementation.
       import importlib.util
 
       # Load the solution module
-      spec = importlib.util.spec_from_file_location("solution_module", state.solution_path)
+      spec = importlib.util.spec_from_file_location("solution_module", self.solution_path)
       if spec is None or spec.loader is None:
-        raise ImportError(f"Cannot load module from {state.solution_path}")
+        raise ImportError(f"Cannot load module from {self.solution_path}")
       
       solution_module = importlib.util.module_from_spec(spec)
       spec.loader.exec_module(solution_module)
@@ -781,9 +734,9 @@ Please update your todo list and continue with the implementation.
 
         # Try to call the function with input data
         try:
-          if state.input_data is not None:
+          if self.input_data is not None:
             # Pass the input data directly as argument
-            result = main_function(state.input_data)
+            result = main_function(self.input_data)
           else:
             # Call without arguments
             result = main_function()
@@ -792,8 +745,8 @@ Please update your todo list and continue with the implementation.
           print(f"[{self._timestamp()}] ✅ Output data extracted: {type(result).__name__}")
 
           # Validate against expected output if provided
-          if state.expected_output is not None:
-            if self._validate_output(result, state.expected_output):
+          if self.expected_output is not None:
+            if self._validate_output(result, self.expected_output):
               print(f"[{self._timestamp()}] ✅ Output matches expected format!")
             else:
               print(f"[{self._timestamp()}] ⚠️ Output format doesn't match expected format")
@@ -840,7 +793,7 @@ Please update your todo list and continue with the implementation.
     except Exception:
       return False
 
-  def _provide_guidance(self, state: AgentState) -> AgentState:
+  def _provide_guidance(self, state: WorkflowState) -> WorkflowState:
     """Provide guidance to Claude Code when it encounters issues"""
     print(f"\n[{self._timestamp()}] 🎯 Analyzing errors and providing guidance...")
 
@@ -852,8 +805,8 @@ Please update your todo list and continue with the implementation.
     analysis_prompt = f"""\
 Analyze this Claude Code implementation failure and provide specific guidance for the next iteration.
 
-Problem: {state.problem_description}
-{f'Expected behavior: {state.example_output}' if state.example_output else ''}
+Problem: {self.problem_description}
+{f'Expected behavior: {self.example_output}' if self.example_output else ''}
 
 Current Issues:
 - Error: {state.error_message}
@@ -887,13 +840,7 @@ Based on the previous attempt, here's guidance for improvement:
 Please update your todo list and continue working on the solution, addressing these specific points.
 """
 
-    state.guidance_messages.append({
-      'iteration': state.current_iteration - 1,  # Previous iteration that failed
-      'guidance': guidance_message,
-      'timestamp': self._timestamp()
-    })
-
-    state.guidance_provided = True
+    state.latest_guidance = guidance_message
     state.error_message = ""  # Clear the error after providing guidance
     state.test_results = ""  # Clear previous test results
 
@@ -955,30 +902,30 @@ Please update your todo list and continue working on the solution, addressing th
       print(f"[{self._timestamp()}] ❌ {error_msg}")
       return error_msg
 
-  def _run_tests(self, state: AgentState) -> AgentState:
+  def _run_tests(self, state: WorkflowState) -> WorkflowState:
     """Execute the tests"""
     print(f"\n[{self._timestamp()}] ▶️  Running tests...")
 
     # Check if test file exists and has content
-    if not os.path.exists(state.test_path):
-      state.test_results = f"Test file {state.test_path} does not exist"
+    if not os.path.exists(self.test_path):
+      state.test_results = f"Test file {self.test_path} does not exist"
       state.is_solved = False
-      print(f"[{self._timestamp()}] ❌ Test file not found: {state.test_path}\n")
+      print(f"[{self._timestamp()}] ❌ Test file not found: {self.test_path}\n")
       return state
 
     # Check if solution file exists
-    if not os.path.exists(state.solution_path):
-      state.test_results = (f"Solution file {state.solution_path} "
+    if not os.path.exists(self.solution_path):
+      state.test_results = (f"Solution file {self.solution_path} "
                             'does not exist')
       state.is_solved = False
-      print(f"[{self._timestamp()}] ❌ Solution file not found: {state.solution_path}\n")
+      print(f"[{self._timestamp()}] ❌ Solution file not found: {self.solution_path}\n")
       return state
 
     try:
       timeout = self.config.agent.test_timeout
       # First try to run a syntax check on both files
-      for file_path, file_type in [(state.solution_path, 'solution'),
-                                   (state.test_path, 'test')]:
+      for file_path, file_type in [(self.solution_path, 'solution'),
+                                   (self.test_path, 'test')]:
         try:
           with open(file_path, 'r') as f:
             compile(f.read(), file_path, 'exec')
@@ -991,7 +938,7 @@ Please update your todo list and continue working on the solution, addressing th
 
       # Run the tests
       result = subprocess.run(
-        [sys.executable, '-m', 'pytest', state.test_path, '-v',
+        [sys.executable, '-m', 'pytest', self.test_path, '-v',
          '--tb=short', '--no-header'],
         capture_output=True,
         text=True,
@@ -1037,27 +984,27 @@ Please update your todo list and continue working on the solution, addressing th
     return state
 
 
-  def _finalize_solution(self, state: AgentState) -> AgentState:
+  def _finalize_solution(self, state: WorkflowState) -> WorkflowState:
     """Finalize the solution"""
     if state.is_solved:
       print(f"\n[{self._timestamp()}] 🎉 {utils.green(utils.bold('Solution completed successfully'))} after "
             f"{state.current_iteration} iterations!")
       
-      if state.integrate_into_codebase:
+      if self.integrate_into_codebase:
         print(f"[{self._timestamp()}] 🔧 {utils.green('Solution integrated into existing codebase')}")
         print(f"[{self._timestamp()}] 🧪 {utils.green('Tests integrated into existing test structure')}")
       else:
-        print(f"[{self._timestamp()}] 💾 {utils.cyan('Code saved to:')} {state.solution_path}")
-        print(f"[{self._timestamp()}] 💾 {utils.cyan('Tests saved to:')} {state.test_path}")
+        print(f"[{self._timestamp()}] 💾 {utils.cyan('Code saved to:')} {self.solution_path}")
+        print(f"[{self._timestamp()}] 💾 {utils.cyan('Tests saved to:')} {self.test_path}")
 
       if state.output_data is not None:
         print(f"[{self._timestamp()}] 📊 {utils.cyan('Output data:')} {type(state.output_data).__name__}")
         if hasattr(state.output_data, '__len__') and len(state.output_data) < 20:
           print(f"[{self._timestamp()}] 📊 {utils.cyan('Result:')} {state.output_data}")
 
-      if not state.integrate_into_codebase:
+      if not self.integrate_into_codebase:
         print(f"\n[{self._timestamp()}] 🚀 {utils.yellow('You can run the tests manually with:')} "
-              f"pytest {state.test_path}")
+              f"pytest {self.test_path}")
     else:
       # Check if this is a credit/quota error that caused early termination
       if state.should_terminate_early and state.error_message and "Credit/Quota Error" in state.error_message:
@@ -1069,15 +1016,15 @@ Please update your todo list and continue working on the solution, addressing th
           claude_output_log=state.claude_output_log
         )
       else:
-        print(f"\n[{self._timestamp()}] ❌ {utils.red('Maximum iterations')} ({state.max_iterations}) {utils.red('reached without solving the problem.')}")
+        print(f"\n[{self._timestamp()}] ❌ {utils.red('Maximum iterations')} ({self.config.agent.max_iterations}) {utils.red('reached without solving the problem.')}")
         print(f"[{self._timestamp()}] 📝 {utils.yellow('Last error:')} {utils.red(state.error_message)}")
       
-      if not state.integrate_into_codebase:
+      if not self.integrate_into_codebase:
         print(f"\n[{self._timestamp()}] 📁 Files generated (may contain partial solutions):")
-        if os.path.exists(state.solution_path):
-          print(f"[{self._timestamp()}]   - {state.solution_path}")
-        if os.path.exists(state.test_path):
-          print(f"[{self._timestamp()}]   - {state.test_path}")
+        if os.path.exists(self.solution_path):
+          print(f"[{self._timestamp()}]   - {self.solution_path}")
+        if os.path.exists(self.test_path):
+          print(f"[{self._timestamp()}]   - {self.test_path}")
 
     # No cleanup needed - all data operations are in-memory only
 
@@ -1089,7 +1036,7 @@ Please update your todo list and continue working on the solution, addressing th
               data_format: str = 'auto',
               example_output: str | None = None,
               solution_path: str | None = None,
-              test_path: str | None = None) -> AgentState:
+              test_path: str | None = None) -> WorkflowState:
     """
     Main method to process a problem with optional input/output data.
 
@@ -1103,38 +1050,36 @@ Please update your todo list and continue working on the solution, addressing th
         test_path: Path to save test file (optional, if None integrates into codebase)
 
     Returns:
-        AgentState with results and any output data
+        WorkflowState with results and any output data
     """
-    # Only create DataManager if I/O data is provided
-    data_manager = None
-    if input_data is not None or expected_output is not None:
-      data_manager = DataManager()
-      print(f"[{self._timestamp()}] 📁 DataManager created for I/O operations")
-
-    # Determine if we're in integration mode
-    integrate_mode = solution_path is None and test_path is None
+    # Set static configuration as instance attributes
+    self.problem_description = problem_description
+    self.example_output = example_output
+    self.input_data = input_data
+    self.expected_output = expected_output
+    self.data_format = data_format
+    self.solution_path = solution_path or self.config.agent.solution_filename
+    self.test_path = test_path or self.config.agent.test_filename
+    self.integrate_into_codebase = solution_path is None and test_path is None
     
-    initial_state = AgentState(
-      problem_description=problem_description,
-      example_output=example_output,
-      input_data=input_data,
-      expected_output=expected_output,
-      data_format=data_format,
-      max_iterations=self.config.agent.max_iterations,
-      solution_path=solution_path or self.config.agent.solution_filename,
-      test_path=test_path or self.config.agent.test_filename,
-      data_manager=data_manager,
-      integrate_into_codebase=integrate_mode
-    )
+    # Only create DataManager if I/O data is provided
+    if input_data is not None or expected_output is not None:
+      self.data_manager = DataManager()
+      print(f"[{self._timestamp()}] 📁 DataManager created for I/O operations")
+    else:
+      self.data_manager = None
+    
+    # Create simplified initial state with only dynamic fields
+    initial_state = WorkflowState()
 
     print(f"[{self._timestamp()}] 🚀 Starting problem solving: {problem_description}")
     try:
       final_state = self.graph.invoke(initial_state)
 
-      # Ensure we return an AgentState object
+      # Ensure we return an WorkflowState object
       if isinstance(final_state, dict):
-        # Convert dict back to AgentState if needed
-        final_state = AgentState(**final_state)
+        # Convert dict back to WorkflowState if needed
+        final_state = WorkflowState(**final_state)
 
       return final_state
 
@@ -1213,8 +1158,8 @@ Please update your todo list and continue working on the solution, addressing th
       else:
         print("❌ INCOMPLETE: Problem not fully solved within iteration limit")
         print("\nYou can manually review and fix the files:")
-        print(f"  - {final_state.solution_path}")
-        print(f"  - {final_state.test_path}")
+        print(f"  - {agent.solution_path}")
+        print(f"  - {agent.test_path}")
 
     except KeyboardInterrupt:
       print("\n\n⏹️ Interrupted by user")

@@ -58,8 +58,8 @@ def byom_example():
 
     print(f'Problem solved: {result.is_solved}')
     if result.is_solved:
-      print(f'✅ Solution created: {result.solution_path}')
-      print(f'✅ Tests created: {result.test_path}')
+      print(f'✅ Solution created: {agent.solution_path}')
+      print(f'✅ Tests created: {agent.test_path}')
     else:
       print(f'❌ Error: {result.error_message}')
 

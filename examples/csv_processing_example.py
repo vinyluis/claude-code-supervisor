@@ -84,8 +84,8 @@ Return format: [{'product': 'name', 'category': 'cat', 'total_value': float}, ..
 
     if result.is_solved:
       print("✓ Inventory processing problem solved successfully!")
-      print(f"Solution file: {result.solution_path}")
-      print(f"Test file: {result.test_path}")
+      print(f"Solution file: {agent.solution_path}")
+      print(f"Test file: {agent.test_path}")
       print(f"Iterations: {result.current_iteration}")
 
       if result.output_data:
@@ -95,8 +95,8 @@ Return format: [{'product': 'name', 'category': 'cat', 'total_value': float}, ..
         if len(result.output_data) > 3:
           print(f"  ... and {len(result.output_data) - 3} more items")
 
-      if result.data_manager:
-        summary = result.data_manager.get_summary()
+      if agent.data_manager:
+        summary = agent.data_manager.get_summary()
         print("\nData processing summary:")
         print(f'  Operations performed: {summary["total_operations"]}')
         print(f'  Formats processed: {summary["formats_processed"]}')
@@ -106,7 +106,7 @@ Return format: [{'product': 'name', 'category': 'cat', 'total_value': float}, ..
       print("✗ Inventory processing problem not solved")
       if result.error_message:
         print(f"Error: {result.error_message}")
-      print(f"Completed iterations: {result.current_iteration}/{result.max_iterations}")
+      print(f"Completed iterations: {result.current_iteration}/{agent.config.agent.max_iterations}")
 
     # Show test results if available
     if result.test_results:
