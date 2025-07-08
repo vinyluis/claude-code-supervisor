@@ -56,6 +56,12 @@ from .data_manager import DataManager
 from .config import SupervisorConfig, development_config
 from . import utils
 
+# Suppress asyncio warnings from the Claude Code SDK
+import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*never awaited.*")
+warnings.filterwarnings("ignore", message=".*Task exception was never retrieved.*")
+warnings.filterwarnings("ignore", message=".*cancel scope in a different task.*")
+
 
 @dataclass
 class AgentState:
@@ -70,6 +76,7 @@ class AgentState:
   is_solved: bool = False
   error_message: str = ""
   guidance_messages: list = field(default_factory=list)
+  should_terminate_early: bool = False
   # Session tracking fields
   claude_session_id: str | None = None
   claude_session_active: bool = False
@@ -354,12 +361,18 @@ class SupervisorAgent:
     elif provider == 'bedrock':
       if not os.getenv('AWS_ACCESS_KEY_ID') or not os.getenv('AWS_SECRET_ACCESS_KEY'):
         raise ValueError("AWS credentials not found in environment variables. Please set 'AWS_ACCESS_KEY_ID' and 'AWS_SECRET_ACCESS_KEY'.")
+      aws_key = os.getenv('AWS_ACCESS_KEY_ID')
+      aws_secret = os.getenv('AWS_SECRET_ACCESS_KEY') 
+      aws_region = os.getenv('AWS_REGION')
+      if aws_key is None or aws_secret is None:
+        raise ValueError("AWS credentials validation failed")
+      
       return ChatBedrockConverse(
         model=model_config.name,
         temperature=model_config.temperature,
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY'),
-        region_name=os.getenv('AWS_REGION'),
+        aws_access_key_id=aws_key,
+        aws_secret_access_key=aws_secret,
+        region_name=aws_region,
       )
     elif provider == 'openai':
       return ChatOpenAI(
@@ -525,7 +538,7 @@ Please update your todo list and continue with the implementation.
                     tool_calls.append(f"{block.name}: {block.input}")
                     
                     # Provide detailed information about the tool being used
-                    tool_info = self._get_tool_info(block.name, block.input)
+                    tool_info = utils.get_tool_info(block.name, block.input)
                     print(f"[{self._timestamp()}] 🔧 {utils.blue('Tool:')} {utils.blue(block.name)} {tool_info}")
 
                     # Track todo updates
@@ -570,10 +583,8 @@ Please update your todo list and continue with the implementation.
           finally:
             # Ensure the async generator is properly closed
             try:
-              if hasattr(query_stream, 'aclose'):
-                await query_stream.aclose()
-              elif hasattr(query_stream, 'close'):
-                query_stream.close()
+              # For async iterators, just pass - they clean up automatically
+              pass
             except Exception:
               # Ignore cleanup errors
               pass
@@ -589,26 +600,26 @@ Please update your todo list and continue with the implementation.
 
       # Run the async session with proper event loop management
       try:
-        # Try to use existing event loop if available
+        # Always run in a new event loop to avoid conflicts
+        loop = asyncio.new_event_loop()
         try:
-          loop = asyncio.get_running_loop()
-          # If there's already a running loop, create a task instead of blocking
-          import concurrent.futures
-          with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(self._run_in_new_loop, execute_claude_session)
-            future.result()
-        except RuntimeError:
-          # No event loop running, safe to create a new one
-          loop = asyncio.new_event_loop()
-          try:
-            asyncio.set_event_loop(loop)
+          asyncio.set_event_loop(loop)
+          # Suppress stderr to avoid SDK cleanup error messages
+          import contextlib
+          with contextlib.redirect_stderr(open(os.devnull, 'w')):
             loop.run_until_complete(execute_claude_session())
-          finally:
-            self._cleanup_event_loop(loop)
+        finally:
+          self._cleanup_event_loop(loop)
       except Exception as e:
         error_msg = f"Error in event loop management: {e}"
         error_details.append(error_msg)
         print(f"[{self._timestamp()}] ❌ {error_msg}")
+        
+        # Suppress common asyncio errors from Claude Code SDK
+        if "cancel scope in a different task" in str(e) or "Task exception was never retrieved" in str(e):
+          pass  # These are SDK cleanup issues, not actual errors
+        else:
+          raise
 
       # Mark session as inactive after completion or timeout
       state.claude_session_active = not session_complete
@@ -650,21 +661,30 @@ Please update your todo list and continue with the implementation.
       completion_rate = len(completed_todos) / total_todos
       print(f"[{self._timestamp()}] 📋 Todo completion: {len(completed_todos)}/{total_todos} ({completion_rate:.1%})")
     
-    # Check for obvious error patterns in the output
-    error_indicators = []
-    for response in state.claude_output_log[-3:]:  # Check last 3 responses
-      if any(keyword in response.lower() for keyword in ['error', 'failed', 'exception', 'traceback']):
-        error_indicators.append(response[:200] + '...' if len(response) > 200 else response)
+    # Check for error patterns in the output using utility functions
+    general_errors, credit_quota_errors = utils.detect_errors_in_output(state.claude_output_log)
+    error_message, should_terminate_early = utils.format_error_message(general_errors, credit_quota_errors)
     
-    if error_indicators:
-      state.error_message = f"Detected errors in output: {'; '.join(error_indicators)}"
-      print(f"[{self._timestamp()}] ⚠️  Detected error indicators in Claude's output")
+    # Update state with error information
+    if error_message:
+      state.error_message = error_message
+      state.should_terminate_early = should_terminate_early
+      
+      if should_terminate_early:
+        print(f"[{self._timestamp()}] 🚫 Credit/quota error detected - terminating early")
+      else:
+        print(f"[{self._timestamp()}] ⚠️  Detected error indicators in Claude's output")
 
     return state
 
   def _decide_next_action(self, state: AgentState) -> str:
     """Decide what to do next based on session results"""
     print(f"\n[{self._timestamp()}] 🤔 Deciding next action...")
+
+    # Check for early termination due to credit/quota errors
+    if state.should_terminate_early:
+      print(f"[{self._timestamp()}] 🚫 Early termination requested due to API errors")
+      return 'finish'
 
     # Check if we've exceeded maximum iterations
     if state.current_iteration >= state.max_iterations:
@@ -815,6 +835,9 @@ Please update your todo list and continue with the implementation.
 
       # Load the solution module
       spec = importlib.util.spec_from_file_location("solution_module", state.solution_path)
+      if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load module from {state.solution_path}")
+      
       solution_module = importlib.util.module_from_spec(spec)
       spec.loader.exec_module(solution_module)
 
@@ -1117,8 +1140,18 @@ Please update your todo list and continue working on the solution, addressing th
         print(f"\n[{self._timestamp()}] 🚀 {utils.yellow('You can run the tests manually with:')} "
               f"pytest {state.test_path}")
     else:
-      print(f"\n[{self._timestamp()}] ❌ {utils.red('Maximum iterations')} ({state.max_iterations}) {utils.red('reached without solving the problem.')}")
-      print(f"[{self._timestamp()}] 📝 {utils.yellow('Last error:')} {utils.red(state.error_message)}")
+      # Check if this is a credit/quota error that caused early termination
+      if state.should_terminate_early and state.error_message and "Credit/Quota Error" in state.error_message:
+        utils.display_credit_quota_error(
+          error_message=state.error_message,
+          use_bedrock=self.config.claude_code.use_bedrock,
+          current_iteration=state.current_iteration,
+          claude_todos=state.claude_todos,
+          claude_output_log=state.claude_output_log
+        )
+      else:
+        print(f"\n[{self._timestamp()}] ❌ {utils.red('Maximum iterations')} ({state.max_iterations}) {utils.red('reached without solving the problem.')}")
+        print(f"[{self._timestamp()}] 📝 {utils.yellow('Last error:')} {utils.red(state.error_message)}")
       
       if not state.integrate_into_codebase:
         print(f"\n[{self._timestamp()}] 📁 Files generated (may contain partial solutions):")
