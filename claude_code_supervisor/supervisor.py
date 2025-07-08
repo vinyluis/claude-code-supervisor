@@ -20,10 +20,11 @@ Key Features:
 Architecture:
 The supervisor uses LangGraph to orchestrate a workflow with these nodes:
 1. initiate_claude: Start Claude Code session with problem description
-2. monitor_claude: Track progress via SDK message streaming and todo updates
-3. validate_solution: Run tests on generated files to verify correctness
-4. provide_guidance: Analyze failures and generate actionable feedback
-5. finalize: Complete the session and report results
+2. execute_claude: Execute Claude session until completion or timeout
+3. collect_results: Collect and analyze results from Claude's session
+4. validate_solution: Run tests on generated files to verify correctness
+5. provide_guidance: Analyze failures and generate actionable feedback
+6. finalize: Complete the session and report results
 
 Usage:
   agent = SupervisorAgent()
@@ -38,7 +39,6 @@ import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 import time
-from datetime import datetime
 from typing import Any
 from langchain_core.language_models.base import BaseLanguageModel
 
@@ -54,6 +54,7 @@ from claude_code_sdk.types import (
 from dotenv import load_dotenv
 from .data_manager import DataManager
 from .config import SupervisorConfig, development_config
+from . import utils
 
 
 @dataclass
@@ -201,7 +202,62 @@ class SupervisorAgent:
 
   def _timestamp(self) -> str:
     """Get current timestamp for logging"""
-    return datetime.now().strftime('%H:%M:%S')
+    return utils.timestamp()
+
+
+  def _run_in_new_loop(self, coro_func):
+    """Run a coroutine function in a new event loop in a separate thread"""
+    loop = asyncio.new_event_loop()
+    try:
+      asyncio.set_event_loop(loop)
+      return loop.run_until_complete(coro_func())
+    finally:
+      self._cleanup_event_loop(loop)
+
+  def _cleanup_event_loop(self, loop):
+    """Safely cleanup an event loop"""
+    try:
+      # Give tasks a brief moment to complete naturally
+      if not loop.is_closed():
+        try:
+          loop.run_until_complete(asyncio.sleep(0.05))
+        except Exception:
+          pass
+
+        # Get pending tasks more safely
+        try:
+          pending_tasks = [task for task in asyncio.all_tasks(loop) 
+                          if not task.done() and not task.cancelled()]
+          
+          if pending_tasks:
+            # Cancel tasks gently
+            for task in pending_tasks:
+              try:
+                task.cancel()
+              except Exception:
+                pass
+
+            # Wait briefly for cancellation to complete
+            try:
+              loop.run_until_complete(asyncio.wait_for(
+                asyncio.gather(*pending_tasks, return_exceptions=True),
+                timeout=0.5
+              ))
+            except (asyncio.TimeoutError, Exception):
+              # If cleanup times out or fails, just continue
+              pass
+        except Exception:
+          # If we can't get tasks or cancel them, just continue
+          pass
+
+        # Close the loop
+        try:
+          loop.close()
+        except Exception:
+          pass
+    except Exception:
+      # If all cleanup fails, just continue - don't let cleanup errors break the main flow
+      pass
 
   def _load_environment(self) -> None:
     """
@@ -252,27 +308,39 @@ class SupervisorAgent:
     workflow = StateGraph(AgentState)
 
     workflow.add_node("initiate_claude", self._initiate_claude_code_session)
-    workflow.add_node("monitor_claude", self._monitor_claude_progress)
+    workflow.add_node("execute_claude", self._execute_claude_session)
+    workflow.add_node("collect_results", self._collect_session_results)
     workflow.add_node("validate_solution", self._validate_solution)
     workflow.add_node("provide_guidance", self._provide_guidance)
     workflow.add_node("finalize", self._finalize_solution)
 
+    # Start with initiation
     workflow.add_edge(START, 'initiate_claude')
-    workflow.add_edge("initiate_claude", 'monitor_claude')
+    
+    # After initiation, execute Claude session
+    workflow.add_edge("initiate_claude", 'execute_claude')
+    
+    # After execution, collect results
+    workflow.add_edge("execute_claude", 'collect_results')
 
+    # From collect_results, decide what to do next
     workflow.add_conditional_edges(
-      'monitor_claude',
-      self._should_continue_monitoring,
+      'collect_results',
+      self._decide_next_action,
       {
-        'continue': 'monitor_claude',
         'validate': 'validate_solution',
-        'guide': 'provide_guidance',
+        'guide': 'provide_guidance', 
         'finish': 'finalize'
       }
     )
 
+    # After validation, always finalize (success or failure)
     workflow.add_edge("validate_solution", 'finalize')
-    workflow.add_edge("provide_guidance", 'monitor_claude')
+    
+    # After guidance, execute Claude again (iteration)
+    workflow.add_edge("provide_guidance", 'execute_claude')
+    
+    # Finalize ends the workflow
     workflow.add_edge("finalize", END)
 
     return workflow.compile()
@@ -302,8 +370,8 @@ class SupervisorAgent:
       raise ValueError(f"Unsupported model provider: {provider}. Supported providers are 'openai' and 'bedrock'.")
 
   def _initiate_claude_code_session(self, state: AgentState) -> AgentState:
-    """Initiate a Claude Code session for the problem"""
-    print(f"\n[{self._timestamp()}] 🚀 Initiating Claude Code session...")
+    """Prepare the initial setup for Claude Code session"""
+    print(f"\n[{self._timestamp()}] 🚀 Setting up Claude Code session...")
 
     # Handle input data if provided
     input_data_info = ""
@@ -341,7 +409,9 @@ The input data is available in your solution as a variable. You can access it di
       if hasattr(state.expected_output, '__len__') and len(state.expected_output) < 10:
         expected_output_info += f"\nExpected result example: {state.expected_output}"
 
-    problem_prompt = f"""\
+    # Build the initial prompt
+    if state.current_iteration == 0:
+      problem_prompt = f"""\
 I need you to solve this programming problem step by step. Please:
 
 1. Create your own plan using the TodoWrite tool to track your progress
@@ -365,89 +435,48 @@ Requirements:
 
 Please start by creating a todo list to plan your approach, then implement the solution.
 """
+    else:
+      # Subsequent iterations - provide guidance
+      latest_guidance = ""
+      if state.guidance_messages:
+        latest_guidance = state.guidance_messages[-1]['guidance']
 
-    # Start the Claude Code session
-    try:
-      state.claude_session_active = True
-      state.last_activity_time = time.time()
-      print(f"[{self._timestamp()}] 📝 Sending problem to Claude Code...")
-      print(f"[{self._timestamp()}] Working directory: {os.getcwd()}")
-
-      # Store the initial prompt
-      state.claude_output_log.append(f"PROMPT: {problem_prompt}")
-
-      return state
-    except Exception as e:
-      print(f"[{self._timestamp()}] ❌ Failed to initiate Claude session: {e}")
-      state.error_message = f"Failed to initiate Claude session: {e}"
-      state.claude_session_active = False
-      return state
-
-  def _monitor_claude_progress(self, state: AgentState) -> AgentState:
-    """Monitor Claude Code's progress and track its activities"""
-    if not state.claude_session_active:
-      return state
-
-    print(f"\n[{self._timestamp()}] 👁️  Monitoring Claude Code progress...")
-
-    try:
-      # Build the prompt for continuation or initial request
-      if state.current_iteration == 0:
-        # First iteration - send the initial problem with data info
-        input_data_info = ""
-        if state.input_data and state.data_manager:
-          input_data_info = f"""
-
-Input Data Available:
-{state.data_manager.serialize_for_context(state.input_data, state.data_format)}
-- Format: {state.data_format}
-- Description: {state.data_manager.get_data_description(state.input_data, state.data_format)}
-
-Make sure to read and use this input data in your solution.
-"""
-
-        expected_output_info = ""
-        if state.expected_output is not None:
-          expected_output_info = f"\nExpected output format: {type(state.expected_output).__name__}"
-          if hasattr(state.expected_output, '__len__') and len(state.expected_output) < 10:
-            expected_output_info += f"\nExpected result example: {state.expected_output}"
-
-        problem_prompt = f"""\
-I need you to solve this programming problem step by step. Please:
-
-1. Create your own plan using the TodoWrite tool to track your progress
-2. Implement a complete solution with proper error handling
-3. Create comprehensive tests for your solution
-4. Run the tests to verify everything works
-
-Problem: {state.problem_description}
-{f'Expected behavior: {state.example_output}' if state.example_output else ''}
-{expected_output_info}
-{input_data_info}
-
-Requirements:
-- Use Python
-{f'- Save the solution as "{state.solution_path}"' if not state.integrate_into_codebase else '- Integrate your solution directly into the existing codebase by modifying the appropriate files'}
-{f'- Save tests as "{state.test_path}"' if not state.integrate_into_codebase else '- Add tests to the existing test files, following the existing test structure and conventions'}
-- Follow clean code practices with docstrings and type hints
-- Ensure all tests pass before completing
-{'- If input data is provided, make sure to read and process it correctly' if state.input_data is not None else ''}
-{'- Return results in the same format as the expected output' if state.expected_output is not None else ''}
-
-Please start by creating a todo list to plan your approach, then implement the solution.
-"""
-      else:
-        # Subsequent iterations - provide guidance or continue session
-        latest_guidance = ""
-        if state.guidance_messages:
-          latest_guidance = state.guidance_messages[-1]['guidance']
-
-        problem_prompt = f"""\
-{latest_guidance if latest_guidance else 'Continue working on the problem.'}
+      problem_prompt = f"""\
+{latest_guidance if latest_guidance else 'Continue working on the problem based on the previous feedback.'}
 
 Please update your todo list and continue with the implementation.
 """
 
+    # Store the prompt for the execution phase
+    state.claude_output_log = [f"PROMPT_ITERATION_{state.current_iteration}: {problem_prompt}"]
+    state.claude_session_active = True
+    state.last_activity_time = time.time()
+    
+    print(f"[{self._timestamp()}] 📝 Prepared prompt for iteration {state.current_iteration}")
+    print(f"[{self._timestamp()}] Working directory: {os.getcwd()}")
+
+    return state
+
+  def _execute_claude_session(self, state: AgentState) -> AgentState:
+    """Execute a Claude Code session until completion or timeout"""
+    if not state.claude_session_active:
+      state.error_message = "Claude session not active"
+      return state
+
+    print(f"\n[{self._timestamp()}] 🚀 Executing Claude Code session (iteration {state.current_iteration})...")
+
+    # Get the prompt from the log
+    problem_prompt = ""
+    for log_entry in state.claude_output_log:
+      if log_entry.startswith(f"PROMPT_ITERATION_{state.current_iteration}:"):
+        problem_prompt = log_entry.split(":", 1)[1].strip()
+        break
+
+    if not problem_prompt:
+      state.error_message = "No prompt found for current iteration"
+      return state
+
+    try:
       # Use pre-configured options and update session-specific parameters
       options = ClaudeCodeOptions(
         cwd=self.base_claude_options.cwd,
@@ -460,14 +489,15 @@ Please update your todo list and continue with the implementation.
         resume=state.claude_session_id if state.claude_session_id else None
       )
 
-      # Process Claude Code messages with timeout
+      # Execute Claude Code session with timeout
       session_complete = False
       current_todos = []
       text_responses = []
       tool_calls = []
+      error_details = []
 
-      async def process_claude_session():
-        nonlocal session_complete, current_todos, text_responses, tool_calls
+      async def execute_claude_session():
+        nonlocal session_complete, current_todos, text_responses, tool_calls, error_details
 
         try:
           # Add timeout to prevent infinite waiting
@@ -490,32 +520,37 @@ Please update your todo list and continue with the implementation.
                 for block in message.content:
                   if isinstance(block, TextBlock):
                     text_responses.append(block.text)
-                    print(f"[{self._timestamp()}] 💬 Claude: {block.text[:200]}{'...' if len(block.text) > 200 else ''}")
+                    print(f"[{self._timestamp()}] 💬 {utils.blue('Claude:')} {utils.blue(block.text[:200] + ('...' if len(block.text) > 200 else ''))}")
                   elif isinstance(block, ToolUseBlock):
                     tool_calls.append(f"{block.name}: {block.input}")
-                    print(f"[{self._timestamp()}] 🔧 Tool used: {block.name}")
+                    
+                    # Provide detailed information about the tool being used
+                    tool_info = self._get_tool_info(block.name, block.input)
+                    print(f"[{self._timestamp()}] 🔧 {utils.blue('Tool:')} {utils.blue(block.name)} {tool_info}")
 
                     # Track todo updates
                     if block.name == 'TodoWrite':
                       todos = block.input.get('todos', [])
                       current_todos = todos
-                      print(f"[{self._timestamp()}] 📋 Todo list updated: {len(todos)} items")
+                      print(f"[{self._timestamp()}] 📋 {utils.blue('Todo list updated:')} {utils.blue(str(len(todos)) + ' items')}")
                       for todo in todos:
                         status_emoji = {'pending': '⏳', 'in_progress': '🔄', 'completed': '✅'}.get(todo.get('status'), '❓')
-                        print(f"[{self._timestamp()}]   {status_emoji} {todo.get('content', 'Unknown task')}")
+                        print(f"[{self._timestamp()}]   {status_emoji} {utils.blue(todo.get('content', 'Unknown task'))}")
 
                   elif isinstance(block, ToolResultBlock):
                     if block.is_error:
-                      print(f"[{self._timestamp()}] ❌ Tool error: {block.content}")
+                      error_msg = f"Tool error: {block.content}"
+                      error_details.append(error_msg)
+                      print(f"[{self._timestamp()}] ❌ {utils.red(error_msg)}")
 
               elif isinstance(message, ResultMessage):
                 # Session completed
                 state.claude_session_id = message.session_id
                 session_complete = True
-                print(f"[{self._timestamp()}] ✅ Claude session completed (ID: {message.session_id})")
-                print(f"[{self._timestamp()}] Turns: {message.num_turns}, Duration: {message.duration_ms}ms")
+                print(f"[{self._timestamp()}] ✅ {utils.green('Claude session completed')} (ID: {message.session_id})")
+                print(f"[{self._timestamp()}] {utils.cyan('Turns:')} {message.num_turns}, {utils.cyan('Duration:')} {message.duration_ms}ms")
                 if message.total_cost_usd:
-                  print(f"[{self._timestamp()}] Cost: ${message.total_cost_usd:.4f}")
+                  print(f"[{self._timestamp()}] {utils.cyan('Cost:')} ${message.total_cost_usd:.4f}")
                 break
 
               elif isinstance(message, SystemMessage):
@@ -523,56 +558,57 @@ Please update your todo list and continue with the implementation.
 
           except asyncio.CancelledError:
             # Handle cancellation gracefully
-            print(f"[{self._timestamp()}] Claude session was cancelled")
-            raise
+            print(f"[{self._timestamp()}] 🛑 Claude session was cancelled")
+            session_complete = True
+            return  # Exit gracefully without re-raising
+          except Exception as e:
+            error_msg = f"Error in query stream: {e}"
+            error_details.append(error_msg)
+            print(f"[{self._timestamp()}] ❌ {error_msg}")
+            session_complete = True
+            return
           finally:
             # Ensure the async generator is properly closed
-            if hasattr(query_stream, 'aclose'):
-              try:
+            try:
+              if hasattr(query_stream, 'aclose'):
                 await query_stream.aclose()
-              except Exception:
-                pass
+              elif hasattr(query_stream, 'close'):
+                query_stream.close()
+            except Exception:
+              # Ignore cleanup errors
+              pass
 
         except Exception as e:
-          print(f"[{self._timestamp()}] ❌ Error in Claude session: {e}")
+          error_msg = f"Error in Claude session: {e}"
+          error_details.append(error_msg)
+          print(f"[{self._timestamp()}] ❌ {error_msg}")
           session_complete = True  # Mark as complete to exit
         finally:
           # Ensure proper cleanup
           session_complete = True
 
-      # Run the async session
-      loop = asyncio.new_event_loop()
-      asyncio.set_event_loop(loop)
+      # Run the async session with proper event loop management
       try:
-        loop.run_until_complete(process_claude_session())
-      finally:
-        # Give tasks a moment to complete naturally before cleanup
+        # Try to use existing event loop if available
         try:
-          # Wait a brief moment for tasks to finish naturally
-          loop.run_until_complete(asyncio.sleep(0.1))
-
-          # Only cancel tasks that are still pending and not from external libraries
-          pending_tasks = [task for task in asyncio.all_tasks(loop) if not task.done()]
-          if pending_tasks:
-            # Cancel tasks more gently
-            for task in pending_tasks:
-              if not task.cancelled():
-                task.cancel()
-
-            # Give cancelled tasks time to handle cancellation
-            try:
-              loop.run_until_complete(asyncio.wait_for(
-                asyncio.gather(*pending_tasks, return_exceptions=True),
-                timeout=1.0
-              ))
-            except asyncio.TimeoutError:
-              # If tasks don't respond to cancellation within 1 second, let them be
-              pass
-        except Exception:
-          # If cleanup fails, continue anyway
-          pass
-        finally:
-          loop.close()
+          loop = asyncio.get_running_loop()
+          # If there's already a running loop, create a task instead of blocking
+          import concurrent.futures
+          with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(self._run_in_new_loop, execute_claude_session)
+            future.result()
+        except RuntimeError:
+          # No event loop running, safe to create a new one
+          loop = asyncio.new_event_loop()
+          try:
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(execute_claude_session())
+          finally:
+            self._cleanup_event_loop(loop)
+      except Exception as e:
+        error_msg = f"Error in event loop management: {e}"
+        error_details.append(error_msg)
+        print(f"[{self._timestamp()}] ❌ {error_msg}")
 
       # Mark session as inactive after completion or timeout
       state.claude_session_active = not session_complete
@@ -580,21 +616,97 @@ Please update your todo list and continue with the implementation.
       # Update state with results
       state.claude_todos = current_todos
       state.claude_output_log.extend(text_responses)
-
-      # Check if files were created
-      if os.path.exists(state.solution_path):
-        print(f"[{self._timestamp()}] 📄 Solution file detected: {state.solution_path}")
-
-      if os.path.exists(state.test_path):
-        print(f"[{self._timestamp()}] 🧪 Test file detected: {state.test_path}")
+      
+      # Store any errors that occurred
+      if error_details:
+        state.error_message = "; ".join(error_details)
 
       return state
 
     except Exception as e:
-      print(f"[{self._timestamp()}] ❌ Error monitoring Claude session: {e}")
-      state.error_message = f"Monitoring error: {e}"
+      state.error_message = f"Execution error: {e}"
       state.claude_session_active = False
+      print(f"[{self._timestamp()}] ❌ Error executing Claude session: {e}")
       return state
+
+  def _collect_session_results(self, state: AgentState) -> AgentState:
+    """Collect and analyze the results from Claude's session"""
+    print(f"\n[{self._timestamp()}] 📊 Collecting session results...")
+
+    # Check if files were created
+    solution_exists = os.path.exists(state.solution_path) if state.solution_path else False
+    test_exists = os.path.exists(state.test_path) if state.test_path else False
+
+    if solution_exists:
+      print(f"[{self._timestamp()}] 📄 Solution file detected: {state.solution_path}")
+    if test_exists:
+      print(f"[{self._timestamp()}] 🧪 Test file detected: {state.test_path}")
+
+    # Analyze todo completion status
+    completed_todos = [todo for todo in state.claude_todos if todo.get('status') == 'completed']
+    total_todos = len(state.claude_todos)
+    
+    if total_todos > 0:
+      completion_rate = len(completed_todos) / total_todos
+      print(f"[{self._timestamp()}] 📋 Todo completion: {len(completed_todos)}/{total_todos} ({completion_rate:.1%})")
+    
+    # Check for obvious error patterns in the output
+    error_indicators = []
+    for response in state.claude_output_log[-3:]:  # Check last 3 responses
+      if any(keyword in response.lower() for keyword in ['error', 'failed', 'exception', 'traceback']):
+        error_indicators.append(response[:200] + '...' if len(response) > 200 else response)
+    
+    if error_indicators:
+      state.error_message = f"Detected errors in output: {'; '.join(error_indicators)}"
+      print(f"[{self._timestamp()}] ⚠️  Detected error indicators in Claude's output")
+
+    return state
+
+  def _decide_next_action(self, state: AgentState) -> str:
+    """Decide what to do next based on session results"""
+    print(f"\n[{self._timestamp()}] 🤔 Deciding next action...")
+
+    # Check if we've exceeded maximum iterations
+    if state.current_iteration >= state.max_iterations:
+      print(f"[{self._timestamp()}] 🔄 Maximum iterations ({state.max_iterations}) reached")
+      return 'finish'
+
+    # If there are explicit errors, provide guidance
+    if state.error_message:
+      print(f"[{self._timestamp()}] ❌ Errors detected, providing guidance")
+      return 'guide'
+
+    # Check if solution appears complete
+    if state.integrate_into_codebase:
+      # In integration mode, check if Claude indicates completion
+      if not state.claude_session_active:
+        print(f"[{self._timestamp()}] ✅ Integration mode: session complete, validating")
+        return 'validate'
+    else:
+      # Standard mode: check if both files exist
+      if os.path.exists(state.solution_path) and os.path.exists(state.test_path):
+        print(f"[{self._timestamp()}] ✅ Both solution and test files exist, validating")
+        return 'validate'
+
+    # Check for timeout (Claude has been working too long without progress)
+    current_time = time.time()
+    claude_config = self.config.claude_code
+    activity_timeout = claude_config.activity_timeout_seconds
+    if current_time - state.last_activity_time > activity_timeout:
+      state.error_message = f"Claude Code session timed out after {activity_timeout} seconds of inactivity"
+      print(f"[{self._timestamp()}] ⏰ Activity timeout reached, providing guidance")
+      return 'guide'
+
+    # If Claude session is still active, there might be an issue
+    if state.claude_session_active:
+      state.error_message = "Claude session still active but no progress detected"
+      print(f"[{self._timestamp()}] ⚠️  Session still active with no clear progress")
+      return 'guide'
+
+    # Default: provide guidance to continue
+    print(f"[{self._timestamp()}] 🔄 No clear completion, providing guidance for next iteration")
+    return 'guide'
+
 
   def _validate_solution(self, state: AgentState) -> AgentState:
     """Validate the solution created by Claude Code"""
@@ -790,6 +902,10 @@ Please update your todo list and continue with the implementation.
     """Provide guidance to Claude Code when it encounters issues"""
     print(f"\n[{self._timestamp()}] 🎯 Analyzing errors and providing guidance...")
 
+    # Increment iteration counter
+    state.current_iteration += 1
+    print(f"[{self._timestamp()}] 🔄 Starting iteration {state.current_iteration}")
+
     # Analyze the current situation
     analysis_prompt = f"""\
 Analyze this Claude Code implementation failure and provide specific guidance for the next iteration.
@@ -800,7 +916,7 @@ Problem: {state.problem_description}
 Current Issues:
 - Error: {state.error_message}
 - Test Results: {state.test_results if state.test_results else 'No tests run yet'}
-- Current Iteration: {state.current_iteration + 1}
+- Current Iteration: {state.current_iteration}
 
 Claude's Todo Progress:
 {self._format_todos_for_analysis(state.claude_todos)}
@@ -830,13 +946,14 @@ Please update your todo list and continue working on the solution, addressing th
 """
 
     state.guidance_messages.append({
-      'iteration': state.current_iteration,
+      'iteration': state.current_iteration - 1,  # Previous iteration that failed
       'guidance': guidance_message,
       'timestamp': self._timestamp()
     })
 
     state.guidance_provided = True
     state.error_message = ""  # Clear the error after providing guidance
+    state.test_results = ""  # Clear previous test results
 
     return state
 
@@ -946,13 +1063,13 @@ Please update your todo list and continue working on the solution, addressing th
       state.is_solved = result.returncode == 0
 
       if state.is_solved:
-        print(f"[{self._timestamp()}] ✅ All tests passed!")
+        print(f"[{self._timestamp()}] ✅ {utils.green('All tests passed!')}")
         print(f"Test output:\n{result.stdout}")
       else:
-        print(f"[{self._timestamp()}] ❌ Tests failed (exit code: {result.returncode})")
+        print(f"[{self._timestamp()}] ❌ {utils.red('Tests failed')} (exit code: {result.returncode})")
         print(f"Test output:\n{result.stdout}")
         if result.stderr:
-          print(f"Errors:\n{result.stderr}")
+          print(f"Errors:\n{utils.red(result.stderr)}")
         # Store error for guidance
         state.error_message = f"Test failures: {result.stdout}\n{result.stderr}"
       print()
@@ -977,72 +1094,31 @@ Please update your todo list and continue working on the solution, addressing th
 
     return state
 
-  def _should_continue_monitoring(self, state: AgentState) -> str:
-    """Decide what to do next based on Claude's progress"""
-    # Check if we've exceeded maximum iterations
-    if state.current_iteration >= state.max_iterations:
-      return 'finish'
-
-    # If Claude session is not active, we need guidance
-    if not state.claude_session_active and state.error_message:
-      if not state.guidance_provided:
-        state.current_iteration += 1
-        return 'guide'
-      else:
-        return 'finish'
-
-    # Check if solution files exist (for standard mode) or if we're in integration mode
-    if state.integrate_into_codebase:
-      # In integration mode, we validate when Claude indicates it's done
-      # This is determined by checking if Claude has stopped being active
-      if not state.claude_session_active:
-        return 'validate'
-    else:
-      # Standard mode: check if both files exist
-      if os.path.exists(state.solution_path) and os.path.exists(state.test_path):
-        return 'validate'
-
-    # Check for timeout (Claude has been working too long without progress)
-    current_time = time.time()
-    claude_config = self.config.claude_code
-    activity_timeout = claude_config.activity_timeout_seconds
-    if current_time - state.last_activity_time > activity_timeout:
-      state.error_message = f"Claude Code session timed out after {activity_timeout} seconds of inactivity"
-      state.claude_session_active = False
-      return 'guide'
-
-    # Continue monitoring if Claude is still active
-    if state.claude_session_active:
-      return 'continue'
-
-    # Default to finishing if we're in an unknown state
-    return 'finish'
 
   def _finalize_solution(self, state: AgentState) -> AgentState:
     """Finalize the solution"""
     if state.is_solved:
-      print(f"\n[{self._timestamp()}] 🎉 Solution completed successfully after "
+      print(f"\n[{self._timestamp()}] 🎉 {utils.green(utils.bold('Solution completed successfully'))} after "
             f"{state.current_iteration} iterations!")
       
       if state.integrate_into_codebase:
-        print(f"[{self._timestamp()}] 🔧 Solution integrated into existing codebase")
-        print(f"[{self._timestamp()}] 🧪 Tests integrated into existing test structure")
+        print(f"[{self._timestamp()}] 🔧 {utils.green('Solution integrated into existing codebase')}")
+        print(f"[{self._timestamp()}] 🧪 {utils.green('Tests integrated into existing test structure')}")
       else:
-        print(f"[{self._timestamp()}] 💾 Code saved to: {state.solution_path}")
-        print(f"[{self._timestamp()}] 💾 Tests saved to: {state.test_path}")
+        print(f"[{self._timestamp()}] 💾 {utils.cyan('Code saved to:')} {state.solution_path}")
+        print(f"[{self._timestamp()}] 💾 {utils.cyan('Tests saved to:')} {state.test_path}")
 
       if state.output_data is not None:
-        print(f"[{self._timestamp()}] 📊 Output data: {type(state.output_data).__name__}")
+        print(f"[{self._timestamp()}] 📊 {utils.cyan('Output data:')} {type(state.output_data).__name__}")
         if hasattr(state.output_data, '__len__') and len(state.output_data) < 20:
-          print(f"[{self._timestamp()}] 📊 Result: {state.output_data}")
+          print(f"[{self._timestamp()}] 📊 {utils.cyan('Result:')} {state.output_data}")
 
       if not state.integrate_into_codebase:
-        print(f"\n[{self._timestamp()}] 🚀 You can run the tests manually with: "
+        print(f"\n[{self._timestamp()}] 🚀 {utils.yellow('You can run the tests manually with:')} "
               f"pytest {state.test_path}")
     else:
-      print(f"\n[{self._timestamp()}] ❌ Maximum iterations ({state.max_iterations}) reached "
-            'without solving the problem.')
-      print(f"[{self._timestamp()}] 📝 Last error: {state.error_message}")
+      print(f"\n[{self._timestamp()}] ❌ {utils.red('Maximum iterations')} ({state.max_iterations}) {utils.red('reached without solving the problem.')}")
+      print(f"[{self._timestamp()}] 📝 {utils.yellow('Last error:')} {utils.red(state.error_message)}")
       
       if not state.integrate_into_codebase:
         print(f"\n[{self._timestamp()}] 📁 Files generated (may contain partial solutions):")
