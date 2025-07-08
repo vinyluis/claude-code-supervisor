@@ -28,9 +28,7 @@ class ClaudeCodeConfig:
   javascript_runtime: str = 'node'
   executable_args: list[str] = field(default_factory=list)
   claude_code_path: str | None = None
-  session_timeout_seconds: int = 300
-  activity_timeout_seconds: int = 180
-  max_turns: int | None = 20
+  max_turns: int | None = None
   max_thinking_tokens: int = 8000
 
 
@@ -75,7 +73,7 @@ def development_config() -> SupervisorConfig:
   return SupervisorConfig(
     model=ModelConfig(name='gpt-4o-mini', temperature=0.2, provider='openai'),
     agent=AgentConfig(max_iterations=5, test_timeout=60),
-    claude_code=ClaudeCodeConfig(max_turns=30, session_timeout_seconds=600),
+    claude_code=ClaudeCodeConfig(max_turns=30),
   )
 
 
@@ -84,5 +82,5 @@ def production_config() -> SupervisorConfig:
   return SupervisorConfig(
     model=ModelConfig(name='gpt-4o', temperature=0.1, provider='openai'),
     agent=AgentConfig(max_iterations=3, test_timeout=45),
-    claude_code=ClaudeCodeConfig(max_turns=20, session_timeout_seconds=300),
+    claude_code=ClaudeCodeConfig(max_turns=20),
   )

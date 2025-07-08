@@ -4,8 +4,6 @@ Tests the SupervisorAgent class and AgentState dataclass functionality.
 """
 
 import os
-import json
-import tempfile
 import pytest
 from unittest.mock import Mock, patch, mock_open
 
@@ -543,30 +541,14 @@ class TestSupervisorAgentIntegration:
     )
     mock_graph_instance.invoke.return_value = final_state
 
-    # Create agent and run
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
+    # Create agent with dataclass config
+    config = development_config()
+    agent = SupervisorAgent(config=config)
+    result = agent.process("Create a hello function",
+                           example_output="hello() = 'world'")
 
-      agent = SupervisorAgent(config_path)
-      result = agent.process("Create a hello function",
-                             example_output="hello() = 'world'")
-
-      assert result.is_solved is True
-      assert result.current_iteration >= 0
+    assert result.is_solved is True
+    assert result.current_iteration >= 0
 
   @patch('claude_code_supervisor.supervisor.StateGraph')
   def test_process_exception_handling(self, mock_state_graph) -> None:
@@ -576,27 +558,11 @@ class TestSupervisorAgentIntegration:
     mock_graph_instance.invoke.side_effect = Exception("Graph execution error")
     mock_state_graph.return_value.compile.return_value = mock_graph_instance
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
+    config = development_config()
+    agent = SupervisorAgent(config=config)
+    result = agent.process("Test problem")
 
-      agent = SupervisorAgent(config_path)
-      result = agent.process("Test problem")
-
-      assert "Graph execution error" in result.error_message
+    assert "Graph execution error" in result.error_message
 
   @patch('claude_code_supervisor.supervisor.StateGraph')
   def test_process_with_custom_prompt(self, mock_state_graph) -> None:
@@ -616,30 +582,14 @@ class TestSupervisorAgentIntegration:
     mock_graph_instance.invoke.return_value = final_state
 
     # Create agent with custom prompt
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
+    config = development_config()
+    agent = SupervisorAgent(config=config, custom_prompt="Use object-oriented design")
+    result = agent.process("Create a hello function")
 
-      agent = SupervisorAgent(config_path, custom_prompt="Use object-oriented design")
-      result = agent.process("Create a hello function")
-
-      assert result.is_solved is True
-      assert result.current_iteration >= 0
-      # Verify custom prompt was integrated
-      assert "object-oriented design" in agent.base_claude_options.system_prompt
+    assert result.is_solved is True
+    assert result.current_iteration >= 0
+    # Verify custom prompt was integrated
+    assert "object-oriented design" in agent.base_claude_options.system_prompt
 
   def test_agent_state_with_io_data(self) -> None:
     """Test AgentState initialization with I/O data"""
@@ -662,30 +612,14 @@ class TestSupervisorAgentIntegration:
 
   def test_supervisor_with_data_manager(self) -> None:
     """Test SupervisorAgent creates DataManager when processing data"""
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
+    config = development_config()
+    agent = SupervisorAgent(config=config)
 
-      agent = SupervisorAgent(config_path)
+    # DataManager should not exist until we process data
+    assert not hasattr(agent, 'data_manager')
 
-      # DataManager should not exist until we process data
-      assert not hasattr(agent, 'data_manager')
-
-      # DataManager is created in the process method when input_data is provided
-      # This is tested in other integration tests
+    # DataManager is created in the process method when input_data is provided
+    # This is tested in other integration tests
 
   @patch('claude_code_supervisor.supervisor.StateGraph')
   def test_process_with_input_data(self, mock_state_graph) -> None:
@@ -709,71 +643,39 @@ class TestSupervisorAgentIntegration:
     mock_graph_instance.invoke.return_value = final_state
 
     # Create agent and test
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
+    config = development_config()
+    agent = SupervisorAgent(config=config)
+    result = agent.process(
+      "Sort this list in ascending order",
+      input_data=[3, 1, 4, 1, 5],
+      expected_output=[1, 1, 3, 4, 5],
+      data_format="list"
+    )
 
-      agent = SupervisorAgent(config_path)
-      result = agent.process(
-        "Sort this list in ascending order",
-        input_data=[3, 1, 4, 1, 5],
-        expected_output=[1, 1, 3, 4, 5],
-        data_format="list"
-      )
-
-      assert result.is_solved is True
-      assert result.input_data == [3, 1, 4, 1, 5]
-      assert result.expected_output == [1, 1, 3, 4, 5]
-      assert result.data_format == "list"
-      assert result.output_data == [1, 1, 3, 4, 5]
+    assert result.is_solved is True
+    assert result.input_data == [3, 1, 4, 1, 5]
+    assert result.expected_output == [1, 1, 3, 4, 5]
+    assert result.data_format == "list"
+    assert result.output_data == [1, 1, 3, 4, 5]
 
   def test_supervisor_agent_with_byom(self) -> None:
     """Test SupervisorAgent initialization with custom LLM (BYOM)"""
     from langchain_openai import ChatOpenAI
     
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
-
-      # Create custom LLM
-      custom_llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.2)
-      
-      # Initialize with BYOM
-      agent = SupervisorAgent(config_path, llm=custom_llm)
-      
-      # Verify the provided LLM is used
-      assert agent.llm is custom_llm
-      
-      # Verify it's the custom LLM (check type and attributes)
-      assert isinstance(agent.llm, ChatOpenAI)
-      assert hasattr(agent.llm, 'model_name')
-      assert hasattr(agent.llm, 'temperature')
+    # Create custom LLM
+    custom_llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.2)
+    
+    # Initialize with BYOM
+    config = development_config()
+    agent = SupervisorAgent(config=config, llm=custom_llm)
+    
+    # Verify the provided LLM is used
+    assert agent.llm is custom_llm
+    
+    # Verify it's the custom LLM (check type and attributes)
+    assert isinstance(agent.llm, ChatOpenAI)
+    assert hasattr(agent.llm, 'model_name')
+    assert hasattr(agent.llm, 'temperature')
 
 
 if __name__ == "__main__":

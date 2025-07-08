@@ -266,8 +266,12 @@ def detect_errors_in_output(output_log: list) -> tuple[list, list]:
   error_indicators = []
   credit_quota_errors = []
   
-  # Define error detection keywords
-  general_error_keywords = ['error', 'failed', 'exception', 'traceback']
+  # Define error detection keywords - be more specific to avoid false positives
+  general_error_keywords = [
+    'error occurred', 'failed to', 'exception raised', 'traceback',
+    'cannot', "can't", 'unable to', 'permission denied', 'file not found',
+    'syntax error', 'import error', 'module not found', 'command not found'
+  ]
   credit_quota_keywords = [
     'credit balance is too low', 'insufficient credits', 'quota exceeded', 
     'rate limit', 'api limit', 'billing', 'payment required',

@@ -212,59 +212,6 @@ class SupervisorAgent:
     return utils.timestamp()
 
 
-  def _run_in_new_loop(self, coro_func):
-    """Run a coroutine function in a new event loop in a separate thread"""
-    loop = asyncio.new_event_loop()
-    try:
-      asyncio.set_event_loop(loop)
-      return loop.run_until_complete(coro_func())
-    finally:
-      self._cleanup_event_loop(loop)
-
-  def _cleanup_event_loop(self, loop):
-    """Safely cleanup an event loop"""
-    try:
-      # Give tasks a brief moment to complete naturally
-      if not loop.is_closed():
-        try:
-          loop.run_until_complete(asyncio.sleep(0.05))
-        except Exception:
-          pass
-
-        # Get pending tasks more safely
-        try:
-          pending_tasks = [task for task in asyncio.all_tasks(loop) 
-                          if not task.done() and not task.cancelled()]
-          
-          if pending_tasks:
-            # Cancel tasks gently
-            for task in pending_tasks:
-              try:
-                task.cancel()
-              except Exception:
-                pass
-
-            # Wait briefly for cancellation to complete
-            try:
-              loop.run_until_complete(asyncio.wait_for(
-                asyncio.gather(*pending_tasks, return_exceptions=True),
-                timeout=0.5
-              ))
-            except (asyncio.TimeoutError, Exception):
-              # If cleanup times out or fails, just continue
-              pass
-        except Exception:
-          # If we can't get tasks or cancel them, just continue
-          pass
-
-        # Close the loop
-        try:
-          loop.close()
-        except Exception:
-          pass
-    except Exception:
-      # If all cleanup fails, just continue - don't let cleanup errors break the main flow
-      pass
 
   def _load_environment(self) -> None:
     """
@@ -513,20 +460,10 @@ Please update your todo list and continue with the implementation.
         nonlocal session_complete, current_todos, text_responses, tool_calls, error_details
 
         try:
-          # Add timeout to prevent infinite waiting
-          claude_config = self.config.claude_code
-          timeout_seconds = claude_config.session_timeout_seconds
-          start_time = time.time()
-          print(f"[{self._timestamp()}] Session timeout set to {timeout_seconds} seconds")
-
+          # Execute Claude Code session - let SDK handle its own timeouts
           query_stream = query(prompt=problem_prompt, options=options)
           try:
             async for message in query_stream:
-              # Check timeout
-              if time.time() - start_time > timeout_seconds:
-                print(f"[{self._timestamp()}] ⏰ Claude session timed out after {timeout_seconds} seconds")
-                break
-
               state.last_activity_time = time.time()
 
               if isinstance(message, AssistantMessage):
@@ -598,27 +535,16 @@ Please update your todo list and continue with the implementation.
           # Ensure proper cleanup
           session_complete = True
 
-      # Run the async session with proper event loop management
+      # Run the async session using the SDK's built-in timeout mechanisms
       try:
-        # Always run in a new event loop to avoid conflicts
-        loop = asyncio.new_event_loop()
-        try:
-          asyncio.set_event_loop(loop)
-          # Suppress stderr to avoid SDK cleanup error messages
-          import contextlib
-          with contextlib.redirect_stderr(open(os.devnull, 'w')):
-            loop.run_until_complete(execute_claude_session())
-        finally:
-          self._cleanup_event_loop(loop)
+        import anyio
+        anyio.run(execute_claude_session)
       except Exception as e:
-        error_msg = f"Error in event loop management: {e}"
+        error_msg = f"Error in async session execution: {e}"
         error_details.append(error_msg)
         print(f"[{self._timestamp()}] ❌ {error_msg}")
-        
-        # Suppress common asyncio errors from Claude Code SDK
-        if "cancel scope in a different task" in str(e) or "Task exception was never retrieved" in str(e):
-          pass  # These are SDK cleanup issues, not actual errors
-        else:
+        # Let the SDK handle its own errors - only store real errors
+        if "cancel scope" not in str(e).lower() and "task exception" not in str(e).lower():
           raise
 
       # Mark session as inactive after completion or timeout
@@ -708,14 +634,7 @@ Please update your todo list and continue with the implementation.
         print(f"[{self._timestamp()}] ✅ Both solution and test files exist, validating")
         return 'validate'
 
-    # Check for timeout (Claude has been working too long without progress)
-    current_time = time.time()
-    claude_config = self.config.claude_code
-    activity_timeout = claude_config.activity_timeout_seconds
-    if current_time - state.last_activity_time > activity_timeout:
-      state.error_message = f"Claude Code session timed out after {activity_timeout} seconds of inactivity"
-      print(f"[{self._timestamp()}] ⏰ Activity timeout reached, providing guidance")
-      return 'guide'
+    # Removed activity timeout check - let SDK handle its own timeouts
 
     # If Claude session is still active, there might be an issue
     if state.claude_session_active:
