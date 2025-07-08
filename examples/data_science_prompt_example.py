@@ -57,7 +57,9 @@ def main():
       problem_description=problem,
       input_data=input_data,
       expected_output=expected_output,
-      data_format='list'
+      data_format='list',
+      solution_path='solution.py',
+      test_path='test_solution.py',
     )
 
     print_results(result)

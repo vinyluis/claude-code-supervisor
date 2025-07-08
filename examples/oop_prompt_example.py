@@ -46,7 +46,9 @@ calc.get_history() -> ['5 + 3 = 8', '4 * 2 = 8']'''
 
     result = agent.process(
       problem_description=problem,
-      example_output=example_output
+      example_output=example_output,
+      solution_path='solution.py',
+      test_path='test_solution.py',
     )
 
     print_results(result)

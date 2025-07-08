@@ -72,6 +72,8 @@ Return format: [{'product': 'name', 'category': 'cat', 'total_value': float}, ..
       input_data=inventory_data,
       expected_output=expected_output,
       data_format='list',
+      solution_path='solution.py',
+      test_path='test_solution.py',
     )
 
     # Display results

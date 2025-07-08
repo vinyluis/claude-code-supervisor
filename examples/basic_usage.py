@@ -37,7 +37,12 @@ def main():
 
   # Process the problem
   print('Processing... (this may take a few minutes)')
-  result = agent.process(problem, example_output=example_output)
+  result = agent.process(
+    problem,
+    example_output=example_output,
+    solution_path='solution.py',
+    test_path='test_solution.py',
+  )
 
   # Display results
   print()
