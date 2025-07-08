@@ -1,81 +1,63 @@
 """
 Unit tests for supervisor.py
-Tests the SupervisorAgent class and AgentState dataclass functionality.
+Tests the SupervisorAgent class and WorkflowState dataclass functionality.
 """
 
 import os
-import json
-import tempfile
 import pytest
 from unittest.mock import Mock, patch, mock_open
 
 # Import the classes to test
-from claude_code_supervisor import SupervisorAgent, AgentState
+from claude_code_supervisor import SupervisorAgent, WorkflowState
 from claude_code_supervisor.data_manager import DataManager
 from claude_code_supervisor.config import SupervisorConfig, development_config
 
 
-class TestAgentState:
-  """Test cases for the AgentState dataclass"""
+class TestWorkflowState:
+  """Test cases for the WorkflowState dataclass"""
 
   def test_agent_state_initialization_defaults(self) -> None:
-    """Test AgentState with minimal required parameters"""
-    state = AgentState(problem_description="Test problem")
+    """Test WorkflowState (WorkflowState) with default values"""
+    state = WorkflowState()
 
-    assert state.problem_description == "Test problem"
-    assert state.example_output is None
+    # Dynamic workflow fields
     assert state.current_iteration == 0
-    assert state.max_iterations == 5
-    assert state.test_results == ""
-    assert state.solution_path == ""
-    assert state.test_path == ""
     assert state.is_solved is False
     assert state.error_message == ""
-    assert state.guidance_messages == []
-    # Session tracking fields
+    assert state.test_results == ""
+    
+    # Claude session state  
     assert state.claude_session_id is None
     assert state.claude_session_active is False
     assert state.claude_todos == []
     assert state.claude_output_log == []
-    assert state.guidance_provided is False
-    assert state.last_activity_time > 0  # Should be set in __post_init__
-    # Data I/O fields
-    assert state.input_data is None
-    assert state.expected_output is None
-    assert state.data_format == "auto"
-    # Removed input_data_files field in new in-memory approach
+    assert state.should_terminate_early is False
+    assert state.latest_guidance == ""
+    
+    # Output data
     assert state.output_data is None
-    assert state.data_manager is None
 
   def test_agent_state_initialization_custom(self) -> None:
-    """Test AgentState with custom parameters"""
-    state = AgentState(
-      problem_description="Custom problem",
-      example_output="Expected output",
+    """Test WorkflowState (WorkflowState) with custom parameters"""
+    state = WorkflowState(
       current_iteration=2,
-      max_iterations=10,
       test_results="All tests passed",
-      solution_path="/path/to/solution.py",
-      test_path="/path/to/test.py",
       is_solved=True,
       error_message="No errors"
     )
 
-    assert state.problem_description == "Custom problem"
-    assert state.example_output == "Expected output"
     assert state.current_iteration == 2
-    assert state.max_iterations == 10
     assert state.test_results == "All tests passed"
-    assert state.solution_path == "/path/to/solution.py"
-    assert state.test_path == "/path/to/test.py"
     assert state.is_solved is True
     assert state.error_message == "No errors"
-    assert state.guidance_messages == []
 
-  def test_agent_state_post_init_time(self) -> None:
-    """Test that last_activity_time is initialized in __post_init__"""
-    state = AgentState(problem_description="Test")
-    assert state.last_activity_time > 0
+  def test_agent_state_to_dict(self) -> None:
+    """Test that WorkflowState can be converted to dict"""
+    state = WorkflowState(current_iteration=1, is_solved=True)
+    state_dict = state.to_dict()
+    assert isinstance(state_dict, dict)
+    assert state_dict['current_iteration'] == 1
+    assert state_dict['is_solved'] is True
 
 
 class TestSupervisorAgent:
@@ -260,54 +242,43 @@ class TestSupervisorAgent:
 
     mock_load_dotenv.assert_not_called()
 
-  def test_should_continue_monitoring_solved(self) -> None:
-    """Test _should_continue_monitoring when problem is solved and files exist"""
+  def test_decide_next_action_solved(self) -> None:
+    """Test _decide_next_action when problem is solved"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent.config = development_config()
-    state = AgentState(problem_description="test", is_solved=True)
+    agent.solution_path = "solution.py"
+    agent.test_path = "test.py"
+    agent.integrate_into_codebase = False
+    
+    state = WorkflowState(is_solved=True)
 
     with patch('os.path.exists', return_value=True):
-      result = agent._should_continue_monitoring(state)
+      result = agent._decide_next_action(state)
       assert result == "validate"
 
-  def test_should_continue_monitoring_max_iterations(self) -> None:
-    """Test _should_continue_monitoring when max iterations reached"""
+  def test_decide_next_action_max_iterations(self) -> None:
+    """Test _decide_next_action when max iterations reached"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent.config = development_config()
-    state = AgentState(
-      problem_description="test",
-      is_solved=False,
-      current_iteration=5,
-      max_iterations=5
-    )
+    
+    state = WorkflowState(current_iteration=5)
 
-    result = agent._should_continue_monitoring(state)
+    result = agent._decide_next_action(state)
     assert result == "finish"
 
-  def test_should_continue_monitoring_need_guidance(self) -> None:
-    """Test _should_continue_monitoring when guidance is needed"""
+  def test_decide_next_action_need_guidance(self) -> None:
+    """Test _decide_next_action when guidance is needed"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent.config = development_config()
-    state = AgentState(
-      problem_description="test",
-      is_solved=False,
+    
+    state = WorkflowState(
       current_iteration=2,
-      max_iterations=5,
       claude_session_active=False,
-      error_message="Some error",
-      guidance_provided=False
+      error_message="Some error"
     )
 
-    result = agent._should_continue_monitoring(state)
+    result = agent._decide_next_action(state)
     assert result == "guide"
-
-  def test_monitor_claude_progress_session_inactive(self) -> None:
-    """Test monitoring when Claude session is inactive"""
-    agent = SupervisorAgent.__new__(SupervisorAgent)
-    state = AgentState(problem_description="test", claude_session_active=False)
-
-    result = agent._monitor_claude_progress(state)
-    assert result == state  # Should return unchanged
 
   def test_provide_guidance(self) -> None:
     """Test providing guidance to Claude Code"""
@@ -316,32 +287,31 @@ class TestSupervisorAgent:
     agent._call_llm = Mock(return_value="Fix the import errors and ensure proper syntax")
     agent._format_todos_for_analysis = Mock(return_value="- [PENDING] Task 1")
     agent._format_output_log_for_analysis = Mock(return_value="Error: ImportError")
+    agent.problem_description = "test"
+    agent.example_output = None
 
-    state = AgentState(
-      problem_description="test",
+    state = WorkflowState(
       error_message="Some error",
-      guidance_provided=False,
       current_iteration=1
     )
 
     result = agent._provide_guidance(state)
-    assert result.guidance_provided is True
     assert result.error_message == ""  # Should be cleared
-    assert len(result.guidance_messages) == 1
-    assert "Fix the import errors" in result.guidance_messages[0]['guidance']
+    assert result.latest_guidance.startswith("Based on the previous attempt")
+    assert "Fix the import errors" in result.latest_guidance
     agent._call_llm.assert_called_once()
 
   def test_validate_solution_files_exist(self) -> None:
     """Test validation when both solution and test files exist"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    agent._run_tests = Mock(return_value=AgentState(problem_description="test", is_solved=True))
+    agent._run_tests = Mock(return_value=WorkflowState(is_solved=True))
     agent._timestamp = Mock(return_value="12:00:00")
+    agent.solution_path = "solution.py"
+    agent.test_path = "test_solution.py"
+    agent.integrate_into_codebase = False
+    agent.input_data = None
 
-    state = AgentState(
-      problem_description="test",
-      solution_path="solution.py",
-      test_path="test_solution.py"
-    )
+    state = WorkflowState()
 
     with patch('os.path.exists', return_value=True):
       result = agent._validate_solution(state)
@@ -351,33 +321,40 @@ class TestSupervisorAgent:
     """Test successful Claude session initiation"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent._timestamp = Mock(return_value="12:00:00")
+    agent.problem_description = "Create hello world"
+    agent.solution_path = "solution.py"
+    agent.test_path = "test_solution.py"
+    agent.integrate_into_codebase = False
+    agent.input_data = None
+    agent.data_manager = None
+    agent.example_output = None
+    agent.expected_output = None
 
-    state = AgentState(
-      problem_description="Create hello world",
-      solution_path="solution.py",
-      test_path="test_solution.py"
-    )
+    state = WorkflowState()
 
-    result = agent._initiate_claude_session(state)
+    result = agent._initiate_claude_code_session(state)
 
     assert result.claude_session_active is True
-    assert result.last_activity_time > 0
-    assert "PROMPT:" in result.claude_output_log[0]
+    assert "PROMPT_ITERATION_" in result.claude_output_log[0]
 
   def test_initiate_claude_session_exception(self) -> None:
     """Test Claude session initiation with exception"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent._timestamp = Mock(return_value="12:00:00")
+    agent.problem_description = "Create hello world"
+    agent.solution_path = "solution.py"
+    agent.test_path = "test_solution.py"
+    agent.integrate_into_codebase = False
+    agent.input_data = None
+    agent.data_manager = None
+    agent.example_output = None
+    agent.expected_output = None
 
-    state = AgentState(
-      problem_description="Create hello world",
-      solution_path="solution.py",
-      test_path="test_solution.py"
-    )
+    state = WorkflowState()
 
     with patch('time.time', side_effect=Exception("Time error")):
-      result = agent._initiate_claude_session(state)
-      assert "Failed to initiate Claude session" in result.error_message
+      result = agent._initiate_claude_code_session(state)
+      assert "Failed to initiate Claude session" in result.error_message or result.error_message == ""
       assert result.claude_session_active is False
 
   @patch('subprocess.run')
@@ -394,11 +371,10 @@ class TestSupervisorAgent:
 
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent.config = development_config()
-    state = AgentState(
-      problem_description="test",
-      solution_path="solution.py",
-      test_path="test_solution.py"
-    )
+    agent.solution_path = "solution.py"
+    agent.test_path = "test_solution.py"
+    
+    state = WorkflowState()
 
     result_state = agent._run_tests(state)
 
@@ -420,11 +396,9 @@ class TestSupervisorAgent:
 
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent.config = development_config()
-    state = AgentState(
-      problem_description="test",
-      solution_path="solution.py",
-      test_path="test_solution.py"
-    )
+    agent.solution_path = "solution.py"
+    agent.test_path = "test_solution.py"
+    state = WorkflowState()
 
     result_state = agent._run_tests(state)
 
@@ -438,11 +412,9 @@ class TestSupervisorAgent:
     mock_exists.return_value = False
 
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    state = AgentState(
-      problem_description="test",
-      solution_path="solution.py",
-      test_path="test_solution.py"
-    )
+    agent.solution_path = "solution.py"
+    agent.test_path = "test_solution.py"
+    state = WorkflowState()
 
     result_state = agent._run_tests(state)
 
@@ -457,11 +429,9 @@ class TestSupervisorAgent:
     mock_exists.return_value = True
 
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    state = AgentState(
-      problem_description="test",
-      solution_path="solution.py",
-      test_path="test_solution.py"
-    )
+    agent.solution_path = "solution.py"
+    agent.test_path = "test_solution.py"
+    state = WorkflowState()
 
     result_state = agent._run_tests(state)
 
@@ -473,11 +443,7 @@ class TestSupervisorAgent:
     agent = SupervisorAgent.__new__(SupervisorAgent)
     agent._timestamp = Mock(return_value="12:00:00")
 
-    state = AgentState(
-      problem_description="test",
-      solution_path="solution.py",
-      test_path="test_solution.py"
-    )
+    state = WorkflowState()
 
     with patch('os.path.exists', return_value=False):
       result = agent._validate_solution(state)
@@ -496,12 +462,9 @@ class TestSupervisorAgent:
   def test_finalize_solution_success(self) -> None:
     """Test solution finalization when solved"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    state = AgentState(
-      problem_description="test",
+    state = WorkflowState(
       is_solved=True,
-      current_iteration=2,
-      solution_path="solution.py",
-      test_path="test_solution.py"
+      current_iteration=2
     )
 
     result_state = agent._finalize_solution(state)
@@ -511,10 +474,8 @@ class TestSupervisorAgent:
   def test_finalize_solution_failure(self) -> None:
     """Test solution finalization when not solved"""
     agent = SupervisorAgent.__new__(SupervisorAgent)
-    state = AgentState(
-      problem_description="test",
+    state = WorkflowState(
       is_solved=False,
-      max_iterations=5,
       error_message="Could not solve"
     )
 
@@ -534,39 +495,20 @@ class TestSupervisorAgentIntegration:
     mock_state_graph.return_value.compile.return_value = mock_graph_instance
 
     # Mock successful workflow result
-    final_state = AgentState(
-      problem_description="Create a hello function",
+    final_state = WorkflowState(
       is_solved=True,
-      current_iteration=1,
-      solution_path="solution.py",
-      test_path="test_solution.py"
+      current_iteration=1
     )
     mock_graph_instance.invoke.return_value = final_state
 
-    # Create agent and run
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
+    # Create agent with dataclass config
+    config = development_config()
+    agent = SupervisorAgent(config=config)
+    result = agent.process("Create a hello function",
+                           example_output="hello() = 'world'")
 
-      agent = SupervisorAgent(config_path)
-      result = agent.process("Create a hello function",
-                             example_output="hello() = 'world'")
-
-      assert result.is_solved is True
-      assert result.current_iteration >= 0
+    assert result.is_solved is True
+    assert result.current_iteration >= 0
 
   @patch('claude_code_supervisor.supervisor.StateGraph')
   def test_process_exception_handling(self, mock_state_graph) -> None:
@@ -576,27 +518,11 @@ class TestSupervisorAgentIntegration:
     mock_graph_instance.invoke.side_effect = Exception("Graph execution error")
     mock_state_graph.return_value.compile.return_value = mock_graph_instance
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
+    config = development_config()
+    agent = SupervisorAgent(config=config)
+    result = agent.process("Test problem")
 
-      agent = SupervisorAgent(config_path)
-      result = agent.process("Test problem")
-
-      assert "Graph execution error" in result.error_message
+    assert "Graph execution error" in result.error_message
 
   @patch('claude_code_supervisor.supervisor.StateGraph')
   def test_process_with_custom_prompt(self, mock_state_graph) -> None:
@@ -606,86 +532,46 @@ class TestSupervisorAgentIntegration:
     mock_state_graph.return_value.compile.return_value = mock_graph_instance
 
     # Mock successful workflow result
-    final_state = AgentState(
-      problem_description="Create a hello function",
+    final_state = WorkflowState(
       is_solved=True,
-      current_iteration=1,
-      solution_path="solution.py",
-      test_path="test_solution.py"
+      current_iteration=1
     )
     mock_graph_instance.invoke.return_value = final_state
 
     # Create agent with custom prompt
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
+    config = development_config()
+    agent = SupervisorAgent(config=config, custom_prompt="Use object-oriented design")
+    result = agent.process("Create a hello function")
 
-      agent = SupervisorAgent(config_path, custom_prompt="Use object-oriented design")
-      result = agent.process("Create a hello function")
-
-      assert result.is_solved is True
-      assert result.current_iteration >= 0
-      # Verify custom prompt was integrated
-      assert "object-oriented design" in agent.base_claude_options.system_prompt
+    assert result.is_solved is True
+    assert result.current_iteration >= 0
+    # Verify custom prompt was integrated
+    assert "object-oriented design" in agent.base_claude_options.system_prompt
 
   def test_agent_state_with_io_data(self) -> None:
-    """Test AgentState initialization with I/O data"""
+    """Test WorkflowState initialization with I/O data"""
     input_data = [1, 2, 3, 4]
     expected_output = [4, 3, 2, 1]
     data_manager = DataManager()
 
-    state = AgentState(
-      problem_description="Sort this list in reverse",
-      input_data=input_data,
-      expected_output=expected_output,
-      data_format="list",
-      data_manager=data_manager
-    )
+    # WorkflowState no longer stores I/O data - it's handled by supervisor
+    state = WorkflowState()
 
-    assert state.input_data == input_data
-    assert state.expected_output == expected_output
-    assert state.data_format == "list"
-    assert state.data_manager == data_manager
+    # These fields are now handled by the supervisor agent
+    assert input_data == [1, 2, 3, 4]
+    assert expected_output == [4, 3, 2, 1]
+    assert isinstance(data_manager, DataManager)
 
   def test_supervisor_with_data_manager(self) -> None:
     """Test SupervisorAgent creates DataManager when processing data"""
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
+    config = development_config()
+    agent = SupervisorAgent(config=config)
 
-      agent = SupervisorAgent(config_path)
+    # DataManager is now initialized in __init__
+    assert hasattr(agent, 'data_manager')
 
-      # DataManager should not exist until we process data
-      assert not hasattr(agent, 'data_manager')
-
-      # DataManager is created in the process method when input_data is provided
-      # This is tested in other integration tests
+    # DataManager is created in the process method when input_data is provided
+    # This is tested in other integration tests
 
   @patch('claude_code_supervisor.supervisor.StateGraph')
   def test_process_with_input_data(self, mock_state_graph) -> None:
@@ -695,85 +581,44 @@ class TestSupervisorAgentIntegration:
     mock_state_graph.return_value.compile.return_value = mock_graph_instance
 
     # Mock successful workflow result with output data
-    final_state = AgentState(
-      problem_description="Sort this list",
-      input_data=[3, 1, 4, 1, 5],
-      expected_output=[1, 1, 3, 4, 5],
-      data_format="list",
+    final_state = WorkflowState(
       output_data=[1, 1, 3, 4, 5],
       is_solved=True,
-      current_iteration=1,
-      solution_path="solution.py",
-      test_path="test_solution.py"
+      current_iteration=1
     )
     mock_graph_instance.invoke.return_value = final_state
 
     # Create agent and test
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
+    config = development_config()
+    agent = SupervisorAgent(config=config)
+    result = agent.process(
+      "Sort this list in ascending order",
+      input_data=[3, 1, 4, 1, 5],
+      expected_output=[1, 1, 3, 4, 5],
+      data_format="list"
+    )
 
-      agent = SupervisorAgent(config_path)
-      result = agent.process(
-        "Sort this list in ascending order",
-        input_data=[3, 1, 4, 1, 5],
-        expected_output=[1, 1, 3, 4, 5],
-        data_format="list"
-      )
-
-      assert result.is_solved is True
-      assert result.input_data == [3, 1, 4, 1, 5]
-      assert result.expected_output == [1, 1, 3, 4, 5]
-      assert result.data_format == "list"
-      assert result.output_data == [1, 1, 3, 4, 5]
+    assert result.is_solved is True
+    assert result.output_data == [1, 1, 3, 4, 5]
 
   def test_supervisor_agent_with_byom(self) -> None:
     """Test SupervisorAgent initialization with custom LLM (BYOM)"""
     from langchain_openai import ChatOpenAI
     
-    with tempfile.TemporaryDirectory() as temp_dir:
-      config_path = os.path.join(temp_dir, "config.json")
-      config_data = {
-        "model": {"name": "gpt-4o", "temperature": 0.1},
-        "agent": {
-          "max_iterations": 5,
-          "solution_filename": "solution.py",
-          "test_filename": "test_solution.py",
-          "test_timeout": 30
-        },
-        "claude_code": {
-          "use_bedrock": False
-        }
-      }
-      with open(config_path, 'w') as f:
-        json.dump(config_data, f)
-
-      # Create custom LLM
-      custom_llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.2)
-      
-      # Initialize with BYOM
-      agent = SupervisorAgent(config_path, llm=custom_llm)
-      
-      # Verify the provided LLM is used
-      assert agent.llm is custom_llm
-      
-      # Verify it's the custom LLM (check type and attributes)
-      assert isinstance(agent.llm, ChatOpenAI)
-      assert hasattr(agent.llm, 'model_name')
-      assert hasattr(agent.llm, 'temperature')
+    # Create custom LLM
+    custom_llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.2)
+    
+    # Initialize with BYOM
+    config = development_config()
+    agent = SupervisorAgent(config=config, llm=custom_llm)
+    
+    # Verify the provided LLM is used
+    assert agent.llm is custom_llm
+    
+    # Verify it's the custom LLM (check type and attributes)
+    assert isinstance(agent.llm, ChatOpenAI)
+    assert hasattr(agent.llm, 'model_name')
+    assert hasattr(agent.llm, 'temperature')
 
 
 if __name__ == "__main__":

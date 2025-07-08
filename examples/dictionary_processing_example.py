@@ -57,28 +57,30 @@ def main():
     problem_description=problem,
     input_data=input_data,
     expected_output=expected_output,
-    data_format='auto'  # Let the system detect the format
+    data_format='auto',
+    solution_path='solution.py',
+    test_path='test_solution.py',
   )
 
-  print_results('Dictionary Processing', result)
+  print_results('Dictionary Processing', result, agent)
 
 
-def print_results(example_name: str, result):
+def print_results(example_name: str, result, agent):
   """Helper function to print results in a consistent format"""
   print(f"\\n{example_name} Results:")
   print("-" * (len(example_name) + 9))
 
   if result.is_solved:
     print('✓ Problem solved successfully!')
-    print(f'Solution file: {result.solution_path}')
-    print(f'Test file: {result.test_path}')
+    print(f'Solution file: {agent.solution_path}')
+    print(f'Test file: {agent.test_path}')
     print(f'Iterations: {result.current_iteration}')
 
     if result.output_data is not None:
       print(f'Generated output: {result.output_data}')
 
-    if result.data_manager:
-      summary = result.data_manager.get_summary()
+    if agent.data_manager:
+      summary = agent.data_manager.get_summary()
       print(f'Data operations: {summary["total_operations"]}')
       print(f'Formats processed: {summary["formats_processed"]}')
 
@@ -86,7 +88,7 @@ def print_results(example_name: str, result):
     print('✗ Problem not solved')
     if result.error_message:
       print(f'Error: {result.error_message}')
-    print(f'Completed iterations: {result.current_iteration}/{result.max_iterations}')
+    print(f'Completed iterations: {result.current_iteration}/{agent.config.agent.max_iterations}')
 
 
 if __name__ == '__main__':

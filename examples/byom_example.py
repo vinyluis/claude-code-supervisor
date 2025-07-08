@@ -51,13 +51,15 @@ def byom_example():
 
     result = agent.process(
       'Create a function that finds the maximum value in a list',
-      example_output='max_value([1, 5, 3, 9, 2]) should return 9'
+      example_output='max_value([1, 5, 3, 9, 2]) should return 9',
+      solution_path='solution.py',
+      test_path='test_solution.py',
     )
 
     print(f'Problem solved: {result.is_solved}')
     if result.is_solved:
-      print(f'✅ Solution created: {result.solution_path}')
-      print(f'✅ Tests created: {result.test_path}')
+      print(f'✅ Solution created: {agent.solution_path}')
+      print(f'✅ Tests created: {agent.test_path}')
     else:
       print(f'❌ Error: {result.error_message}')
 
