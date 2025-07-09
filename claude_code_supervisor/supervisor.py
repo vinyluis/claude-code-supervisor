@@ -267,6 +267,7 @@ class SupervisorAgent:
     self.integrate_into_codebase: bool = False
     self.development_guidelines: str = prompts.development_guidelines()
     self.instruction_prompt: str = prompts.instruction_prompt()
+    self.test_instructions: str = prompts.test_instructions(self.solution_path)
 
     # Check for credentials on the kwargs
     if 'aws_access_key_id' in kwargs:
@@ -428,6 +429,7 @@ class SupervisorAgent:
       instruction_prompt=self.instruction_prompt,
       problem_description=self.problem_description,
       development_guidelines=self.development_guidelines,
+      test_instructions=self.test_instructions,
       solution_path=self.solution_path,
       test_path=self.test_path,
       input_data=self.input_data,
@@ -668,7 +670,7 @@ class SupervisorAgent:
         # since tests already passed
     elif state.validation_feedback:
       # We have specific feedback - continue iteration
-      utils.print_info(f"📋 Validation feedback generated - will continue iteration")
+      utils.print_info("📋 Validation feedback generated - will continue iteration")
       state.is_solved = False  # Ensure we continue iterating
     else:
       # Tests failed but no specific feedback yet - need to analyze
@@ -762,6 +764,7 @@ class SupervisorAgent:
     analysis_prompt = test_analysis_template().format(
       claude_output=recent_output,
       mentioned_items=mentioned_items,
+      test_instructions=self.test_instructions,
       available_test_files=test_files
     )
 
@@ -966,7 +969,7 @@ class SupervisorAgent:
     """Validate that actual output matches expected output format/type"""
     try:
       # Check type compatibility
-      if type(actual) != type(expected):
+      if type(actual) is not type(expected):
         return False
 
       # For collections, check structure
@@ -975,7 +978,7 @@ class SupervisorAgent:
           return False
         # Check if all elements have compatible types
         for a, e in zip(actual, expected):
-          if type(a) != type(e):
+          if type(a) is not type(e):
             return False
 
       elif isinstance(expected, dict):
@@ -983,7 +986,7 @@ class SupervisorAgent:
           return False
         # Check value types
         for key in expected:
-          if type(actual[key]) != type(expected[key]):
+          if type(actual[key]) is not type(expected[key]):
             return False
 
       return True
@@ -1102,6 +1105,7 @@ Please update your todo list and continue working on the solution, addressing th
       error_message=state.error_message,
       test_results=state.test_results if state.test_results else 'No tests run yet',
       current_iteration=state.current_iteration,
+      test_instructions=self.test_instructions,
       todo_progress=self._format_todos_for_analysis(state.claude_todos),
       recent_output=self._format_output_log_for_analysis(state.claude_log)
     )
@@ -1121,6 +1125,7 @@ Please update your todo list and continue working on the solution, addressing th
       problem_description=self.problem_description,
       example_output_section=example_output_section,
       validation_feedback=state.validation_feedback,
+      test_instructions=self.test_instructions,
       recent_messages=recent_messages,
       todo_progress=self._format_todos_for_analysis(state.claude_todos)
     )
@@ -1334,6 +1339,7 @@ Please update your todo list and continue working on the solution, addressing th
     Kwargs:
       development_guidelines: Custom development guidelines for Claude Code
       instruction_prompt: Custom instruction prompt for Claude Code
+      test_instructions: Custom instructions for running tests
 
     Returns:
       WorkflowState with results and any output data
@@ -1347,8 +1353,9 @@ Please update your todo list and continue working on the solution, addressing th
     self.integrate_into_codebase = solution_path is None and test_path is None
 
     # Prompt overrides
-    self.development_guidelines = kwargs.get('development_guidelines') or self.development_guidelines
-    self.instruction_prompt = kwargs.get('instruction_prompt') or self.instruction_prompt
+    self.development_guidelines = kwargs.get('development_guidelines') or prompts.development_guidelines()
+    self.instruction_prompt = kwargs.get('instruction_prompt') or prompts.instruction_prompt()
+    self.test_instructions = kwargs.get('test_instructions') or prompts.test_instructions(self.solution_path)
 
     # Create simplified initial state with only dynamic fields
     initial_state = WorkflowState()

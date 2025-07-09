@@ -28,10 +28,24 @@ I need you to solve this programming problem step by step. Please:
 """
 
 
+def test_instructions(test_path: str | None = None) -> str:
+  if test_path is not None:
+    return f"""\
+- Create tests using pytest for the solution in {test_path}
+- Run the tests with the command `pytest {test_path}` to ensure your solution works correctly.
+"""
+  else:
+    return """\
+- Write tests for your solution in the same style as the existing tests
+- If you create new code, ensure that it is covered by tests.
+"""
+
+
 def build_claude_instructions(
     instruction_prompt: str,
     problem_description: str,
     development_guidelines: str,
+    test_instructions: str,
     solution_path: str | None = None,
     test_path: str | None = None,
     input_data: DataTypes | None = None,
@@ -65,6 +79,9 @@ def build_claude_instructions(
 ### Output Data:
 {output_data if output_data is not None else 'No output data provided.'}
 
+### Testing:
+{test_instructions}
+
 Please start by creating a todo list to plan your approach, then implement the solution.
 When you're done, please tell me specifically which function/classes you created, the files you modified, and the tests you added. Also tell me how to run the tests and what the expected output is.
 """
@@ -92,6 +109,9 @@ Current Issues:
 - Test Results: {test_results}
 - Current Iteration: {current_iteration}
 
+Testing Instructions:
+{test_instructions}
+
 Claude's Todo Progress:
 {todo_progress}
 
@@ -102,6 +122,7 @@ Provide specific, actionable guidance for Claude Code to fix these issues:
 1. What went wrong?
 2. What specific steps should Claude take next?
 3. What should Claude focus on or avoid?
+4. How should Claude run and interpret the tests based on the testing instructions?
 
 Keep your response concise and actionable (2-3 bullet points).
 """
@@ -118,6 +139,9 @@ Problem: {problem_description}
 Validation Feedback:
 {validation_feedback}
 
+Testing Instructions:
+{test_instructions}
+
 Claude's Recent Messages:
 {recent_messages}
 
@@ -128,6 +152,7 @@ Based on the validation feedback and Claude's current work, provide specific gui
 1. What aspects of the solution need improvement?
 2. What specific changes should Claude make?
 3. How can the implementation be enhanced?
+4. How should Claude run and interpret the tests based on the testing instructions?
 
 Focus on actionable improvements that will address the validation feedback.
 Keep your response concise and specific (2-3 bullet points).
@@ -145,18 +170,21 @@ Claude's Recent Output:
 Claude mentioned these files/functions/classes:
 {mentioned_items}
 
+Testing Instructions:
+{test_instructions}
+
 Available test files in project:
 {available_test_files}
 
 Determine the best approach for testing:
 1. Should we run specific test files that Claude mentioned?
 2. Should we run integration tests on the entire project?
-3. What specific test commands should be executed?
+3. What specific test commands should be executed based on the testing instructions?
 
 Provide a clear testing strategy:
 - Test type: (specific/integration)
 - Test files/patterns to run: (list specific files or patterns)
-- Expected test command: (exact command to execute)
+- Expected test command: (exact command to execute, following the testing instructions)
 
-Be specific and actionable. Focus on what Claude actually implemented.
+Be specific and actionable. Focus on what Claude actually implemented and follow the testing instructions provided.
 """
