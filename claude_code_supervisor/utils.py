@@ -5,11 +5,39 @@ Provides terminal coloring, formatting, and other helper functions
 to enhance the supervisor's output and functionality.
 """
 
+from enum import Enum
 from datetime import datetime
 import numpy as np
 import pandas as pd
 
 DataTypes = str | list | dict | tuple | np.ndarray | pd.DataFrame | pd.Series
+
+
+class ToolsEnum(Enum):
+  """
+  Tools available for Claude Code
+  Source: https://docs.anthropic.com/en/docs/claude-code/settings
+  """
+  AGENT = 'Agent'
+  BASH = 'Bash'
+  EDIT = 'Edit'
+  GLOB = 'Glob'
+  GREP = 'Grep'
+  LS = 'LS'
+  MULTIEDIT = 'MultiEdit'
+  NOTEBOOKEDIT = 'NotebookEdit'
+  NOTEBOOKREAD = 'NotebookRead'
+  READ = 'Read'
+  TODOREAD = 'TodoRead'
+  TODOWRITE = 'TodoWrite'
+  WEBFETCH = 'WebFetch'
+  WEBSEARCH = 'WebSearch'
+  WRITE = 'Write'
+
+  @classmethod
+  def all(cls) -> list[str]:
+    """Get all tool names as a list"""
+    return [tool.value for tool in cls]
 
 
 def timestamp() -> str:

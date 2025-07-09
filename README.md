@@ -167,7 +167,8 @@ config = SupervisorConfig(
     ),
     claude_code=ClaudeCodeConfig(
         max_turns=20,
-        use_bedrock=False
+        use_bedrock=False,
+        tools=['Read', 'Write', 'Edit', 'Bash', 'TodoWrite']  # Custom tool set
     )
 )
 agent = SupervisorAgent(config=config)
@@ -291,6 +292,45 @@ dev_agent = SupervisorAgent(config=dev_config)
 prod_config = production_config()
 prod_agent = SupervisorAgent(config=prod_config)
 ```
+
+### Tool Configuration
+
+Claude Code has access to various tools. By default, all tools are enabled, but you can customize which tools are available:
+
+```python
+from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor.config import SupervisorConfig, ClaudeCodeConfig
+from claude_code_supervisor.utils import ToolsEnum
+
+# All tools (default)
+config = SupervisorConfig(
+    claude_code=ClaudeCodeConfig(tools=ToolsEnum.all())
+)
+
+# Custom tool set
+config = SupervisorConfig(
+    claude_code=ClaudeCodeConfig(
+        tools=['Read', 'Write', 'Edit', 'Bash', 'TodoWrite', 'LS', 'Grep']
+    )
+)
+
+# Minimal tools for simple tasks
+from claude_code_supervisor.config import minimal_tools_config
+config = minimal_tools_config()
+
+# Notebook-focused tools
+from claude_code_supervisor.config import notebook_config
+config = notebook_config()
+```
+
+**Available Tools:**
+- `Read`, `Write`, `Edit`, `MultiEdit` - File operations
+- `Bash` - Command execution
+- `LS`, `Glob`, `Grep` - File system navigation and search
+- `TodoWrite` - Task management
+- `NotebookRead`, `NotebookEdit` - Jupyter notebook support
+- `WebFetch`, `WebSearch` - Web access
+- `Agent` - Delegate tasks to other agents
 
 ## 🧪 Testing
 

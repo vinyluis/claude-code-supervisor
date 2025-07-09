@@ -326,7 +326,8 @@ class SupervisorAgent:
       permission_mode='acceptEdits',
       max_turns=claude_config.max_turns,
       append_system_prompt=self.append_system_prompt,
-      max_thinking_tokens=claude_config.max_thinking_tokens
+      max_thinking_tokens=claude_config.max_thinking_tokens,
+      allowed_tools=claude_config.tools
     )
     utils.print_debug("Pre-configured Claude Code options")
 
@@ -505,6 +506,7 @@ class SupervisorAgent:
       max_turns=self.base_claude_options.max_turns,
       append_system_prompt=self.base_claude_options.append_system_prompt,
       max_thinking_tokens=self.base_claude_options.max_thinking_tokens,
+      allowed_tools=self.base_claude_options.allowed_tools,
       continue_conversation=state.current_iteration > 0,
       resume=state.claude_session_id if state.claude_session_id else None
     )
