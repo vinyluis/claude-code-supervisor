@@ -144,6 +144,7 @@ class WorkflowState:
   claude_todos: list[dict] = field(default_factory=list)
   claude_log: list[str] = field(default_factory=list)
   should_terminate_early: bool = False
+  should_reduce_message: bool = False
 
   def to_dict(self) -> dict:
     return dataclasses.asdict(self)
@@ -340,6 +341,7 @@ class SupervisorAgent:
     workflow.add_node("collect_results", self.collect_session_results)
     workflow.add_node("validate_solution", self.validate_solution)
     workflow.add_node("provide_guidance", self.provide_guidance)
+    workflow.add_node("reduce_message", self.reduce_message_and_retry)
     workflow.add_node("finalize", self.finalize_solution)
 
     workflow.add_edge(START, 'initiate_claude')
@@ -351,6 +353,7 @@ class SupervisorAgent:
       {
         'validate': 'validate_solution',
         'guide': 'provide_guidance',
+        'reduce': 'reduce_message',
         'finish': 'finalize'
       }
     )
@@ -363,6 +366,7 @@ class SupervisorAgent:
       }
     )
     workflow.add_edge("provide_guidance", 'execute_claude')
+    workflow.add_edge("reduce_message", 'execute_claude')
     workflow.add_edge("finalize", END)
 
     return workflow.compile()
@@ -548,16 +552,20 @@ class SupervisorAgent:
       utils.print_with_timestamp(f"📋 Todo completion: {len(completed_todos)}/{todos_count} ({completion_rate:.1%})")
 
     # Check for error patterns in the output using utility functions
-    general_errors, credit_quota_errors = utils.detect_errors_in_output(state.claude_log)
-    error_message, should_terminate_early = utils.format_error_message(general_errors, credit_quota_errors)
+    general_errors, credit_quota_errors, context_length_errors = utils.detect_errors_in_output(state.claude_log)
+    error_message, should_terminate_early, should_reduce_message = utils.format_error_message(
+        general_errors, credit_quota_errors, context_length_errors)
 
     # Update state with error information
     if error_message:
       state.error_message = error_message
       state.should_terminate_early = should_terminate_early
+      state.should_reduce_message = should_reduce_message
 
       if should_terminate_early:
         utils.print_with_timestamp("🚫 Credit/quota error detected - terminating session")
+      elif should_reduce_message:
+        utils.print_with_timestamp("⚠️  Context length error detected - will reduce message and retry")
       else:
         utils.print_warning("Detected error indicators in Claude's output")
 
@@ -576,6 +584,11 @@ class SupervisorAgent:
     if state.current_iteration >= self.config.agent.max_iterations:
       utils.print_with_timestamp(f"🔄 Maximum iterations ({self.config.agent.max_iterations}) reached")
       return 'finish'
+
+    # Check if we need to reduce message due to context length errors
+    if state.should_reduce_message:
+      utils.print_with_timestamp("📏 Context length error detected - reducing message")
+      return 'reduce'
 
     # If there are explicit errors, provide guidance
     if state.error_message:
@@ -1031,6 +1044,50 @@ Please update your todo list and continue working on the solution, addressing th
     state.test_results = ""
     state.validation_feedback = ""
 
+    return state
+
+  def reduce_message_and_retry(self, state: WorkflowState) -> WorkflowState:
+    """
+    Reduce the message length when context length errors occur and retry.
+
+    This method is triggered when Claude outputs "API Error: 400 Input is too long for requested model."
+    It reduces the last message in the queue by removing non-essential content while preserving
+    the core requirements, then prepares for a retry.
+
+    Args:
+      state: Current workflow state
+
+    Returns:
+      Updated state with reduced message for retry
+    """
+    utils.print_with_timestamp("\n📏 Reducing message length due to context limit...")
+
+    if not state.messages:
+      utils.print_error("No messages to reduce")
+      state.error_message = "Context length error but no messages available to reduce"
+      return state
+
+    # Get the last message (current prompt)
+    original_message = state.messages[-1]
+    utils.print_with_timestamp(f"Original message length: {len(original_message)} characters")
+
+    # Reduce the message using the utility function
+    reduced_message = utils.reduce_message_length(original_message)
+    utils.print_with_timestamp(f"Reduced message length: {len(reduced_message)} characters")
+
+    # Append reduced version to the message buffer
+    state.messages.append(reduced_message)
+
+    # Clear the context length error flags
+    state.should_reduce_message = False
+    state.error_message = ""
+
+    # Add a note to the log about the reduction
+    state.claude_log.append(f"MESSAGE_REDUCED: Original length {len(original_message)}, reduced to {len(reduced_message)}")
+
+    utils.print_success("Message reduced successfully - ready for retry")
+
+    state.current_iteration += 1
     return state
 
   def _generate_error_guidance(self, state: WorkflowState) -> str:

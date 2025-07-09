@@ -354,7 +354,7 @@ def display_credit_quota_error(error_message: str, use_bedrock: bool = False,
     print_with_timestamp("- You may be able to resume or retry with a smaller scope")
 
 
-def detect_errors_in_output(output_log: list) -> tuple[list, list]:
+def detect_errors_in_output(output_log: list) -> tuple[list, list, list]:
   """
   Detect error patterns in Claude's output log.
 
@@ -362,18 +362,27 @@ def detect_errors_in_output(output_log: list) -> tuple[list, list]:
     output_log: List of text responses from Claude
 
   Returns:
-    tuple: (general_error_indicators, credit_quota_errors)
+    tuple: (general_error_indicators, credit_quota_errors, context_length_errors)
       - general_error_indicators: List of responses with general errors
       - credit_quota_errors: List of responses with credit/quota errors
+      - context_length_errors: List of responses with context length errors
   """
   error_indicators = []
   credit_quota_errors = []
+  context_length_errors = []
 
   # Define error detection keywords - be more specific to avoid false positives
   general_error_keywords = [
     'error occurred', 'failed to', 'exception raised', 'traceback',
     'cannot', "can't", 'unable to', 'permission denied', 'file not found',
     'syntax error', 'import error', 'module not found', 'command not found'
+  ]
+  
+  # Context length errors that should trigger message reduction
+  context_length_keywords = [
+    'input is too long', 'context length exceeded', 'maximum context length',
+    'token limit exceeded', 'input too long for requested model',
+    'context window exceeded', 'maximum sequence length'
   ]
   credit_quota_keywords = [
     'credit balance is too low', 'insufficient credits', 'quota exceeded',
@@ -396,33 +405,173 @@ def detect_errors_in_output(output_log: list) -> tuple[list, list]:
       truncated_response = response[:200] + '...' if len(response) > 200 else response
       credit_quota_errors.append(truncated_response)
 
+    # Check for context length errors (these should trigger message reduction)
+    elif any(keyword in response_lower for keyword in context_length_keywords):
+      truncated_response = response[:200] + '...' if len(response) > 200 else response
+      context_length_errors.append(truncated_response)
+
     # Check for general errors
     elif any(keyword in response_lower for keyword in general_error_keywords):
       truncated_response = response[:200] + '...' if len(response) > 200 else response
       error_indicators.append(truncated_response)
 
-  return error_indicators, credit_quota_errors
+  return error_indicators, credit_quota_errors, context_length_errors
 
 
-def format_error_message(general_errors: list, credit_quota_errors: list) -> tuple[str, bool]:
+def format_error_message(general_errors: list, credit_quota_errors: list, context_length_errors: list = None) -> tuple[str, bool, bool]:
   """
-  Format error messages and determine if early termination is needed.
+  Format error messages and determine if early termination or message reduction is needed.
 
   Args:
     general_errors: List of general error indicators
     credit_quota_errors: List of credit/quota error indicators
+    context_length_errors: List of context length error indicators
 
   Returns:
-    tuple: (error_message, should_terminate_early)
+    tuple: (error_message, should_terminate_early, should_reduce_message)
   """
+  if context_length_errors is None:
+    context_length_errors = []
+    
   if credit_quota_errors:
     error_message = f"API Credit/Quota Error - Early Termination: {'; '.join(credit_quota_errors)}"
     should_terminate_early = True
+    should_reduce_message = False
+  elif context_length_errors:
+    error_message = f"Context Length Error - Message Too Long: {'; '.join(context_length_errors)}"
+    should_terminate_early = False
+    should_reduce_message = True
   elif general_errors:
     error_message = f"Detected errors in output: {'; '.join(general_errors)}"
     should_terminate_early = False
+    should_reduce_message = False
   else:
     error_message = ""
     should_terminate_early = False
+    should_reduce_message = False
 
-  return error_message, should_terminate_early
+  return error_message, should_terminate_early, should_reduce_message
+
+
+def reduce_message_length(message: str, reduction_factor: float = 0.7) -> str:
+  """
+  Reduce message length by removing non-essential parts while preserving core information.
+  
+  Args:
+    message: The message to reduce
+    reduction_factor: Target reduction factor (0.7 means reduce to 70% of original length)
+  
+  Returns:
+    Reduced message that preserves essential information
+  """
+  if not message:
+    return message
+    
+  lines = message.split('\n')
+  target_length = int(len(message) * reduction_factor)
+  
+  # Priority order for content preservation:
+  # 1. Problem description (usually at the beginning)
+  # 2. Requirements/guidelines
+  # 3. Input/output data (essential for data tasks)
+  # 4. Examples (can be shortened)
+  # 5. Verbose explanations (can be removed)
+  
+  # Find key sections
+  problem_lines = []
+  requirements_lines = []
+  data_lines = []
+  example_lines = []
+  other_lines = []
+  
+  current_section = 'other'
+  
+  for line in lines:
+    line_lower = line.lower()
+    
+    # Identify section types
+    if any(keyword in line_lower for keyword in ['problem description', 'task:', 'create', 'implement', 'solve']):
+      current_section = 'problem'
+    elif any(keyword in line_lower for keyword in ['requirements', 'guidelines', 'development guidelines']):
+      current_section = 'requirements'
+    elif any(keyword in line_lower for keyword in ['input data', 'output data', 'expected output']):
+      current_section = 'data'
+    elif any(keyword in line_lower for keyword in ['example', 'demonstration', 'usage']):
+      current_section = 'example'
+    
+    # Categorize lines
+    if current_section == 'problem':
+      problem_lines.append(line)
+    elif current_section == 'requirements':
+      requirements_lines.append(line)
+    elif current_section == 'data':
+      data_lines.append(line)
+    elif current_section == 'example':
+      example_lines.append(line)
+    else:
+      other_lines.append(line)
+  
+  # Build reduced message with priority
+  reduced_lines = []
+  current_length = 0
+  
+  # Always include problem description
+  for line in problem_lines:
+    if current_length + len(line) < target_length:
+      reduced_lines.append(line)
+      current_length += len(line)
+    else:
+      break
+  
+  # Include requirements (condensed)
+  for line in requirements_lines:
+    if current_length + len(line) < target_length:
+      # Condense requirements by removing verbose explanations
+      if len(line) > 100:
+        condensed_line = line[:100] + '...'
+      else:
+        condensed_line = line
+      reduced_lines.append(condensed_line)
+      current_length += len(condensed_line)
+    else:
+      break
+  
+  # Include essential data info
+  for line in data_lines:
+    if current_length + len(line) < target_length:
+      reduced_lines.append(line)
+      current_length += len(line)
+    else:
+      break
+  
+  # Include shortened examples if space allows
+  for line in example_lines:
+    if current_length + len(line) < target_length:
+      # Truncate long examples
+      if len(line) > 150:
+        shortened_line = line[:150] + '...'
+      else:
+        shortened_line = line
+      reduced_lines.append(shortened_line)
+      current_length += len(shortened_line)
+    else:
+      break
+  
+  # Include other essential lines if space allows
+  for line in other_lines:
+    if current_length + len(line) < target_length:
+      if len(line) > 80:
+        shortened_line = line[:80] + '...'
+      else:
+        shortened_line = line
+      reduced_lines.append(shortened_line)
+      current_length += len(shortened_line)
+    else:
+      break
+  
+  # Add a note about message reduction
+  reduced_message = '\n'.join(reduced_lines)
+  if len(reduced_message) < len(message):
+    reduced_message += '\n\n[NOTE: This message was automatically reduced to fit context limits. Focus on the core requirements above.]'
+  
+  return reduced_message
