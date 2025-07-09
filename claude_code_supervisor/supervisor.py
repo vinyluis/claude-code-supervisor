@@ -57,50 +57,49 @@ from . import utils, prompts
 
 # Suppress asyncio warnings from the Claude Code SDK
 import warnings
-import sys
-import io
-import contextlib
 
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*never awaited.*")
 warnings.filterwarnings("ignore", message=".*Task exception was never retrieved.*")
 warnings.filterwarnings("ignore", message=".*cancel scope in a different task.*")
 warnings.filterwarnings("ignore", message=".*Attempted to exit cancel scope in a different task.*")
 
+
 class AsyncioErrorFilter:
     """
     A stderr filter that suppresses specific asyncio-related error messages from the Claude Code SDK.
-    
+
     The Claude Code SDK uses anyio for async task management, which can generate harmless but
     confusing error messages when tasks are cancelled or when cancel scopes exit in different
     tasks. These errors don't affect functionality but create noise in the output.
-    
+
     This filter intercepts stderr output and suppresses the following specific error patterns:
-    - "Task exception was never retrieved" 
+    - "Task exception was never retrieved"
     - "cancel scope in a different task"
     - "RuntimeError: Attempted to exit cancel scope in a different task"
-    
+
     All other stderr output is passed through unchanged, preserving legitimate error messages.
-    
+
     The filter is installed at module import time to ensure it catches errors that occur
     during the cleanup phase of async operations.
     """
-    
+
     def __init__(self, original_stderr):
         self.original_stderr = original_stderr
         self.buffer = []
-    
+
     def write(self, text):
-        if ("Task exception was never retrieved" in text or 
-            "cancel scope in a different task" in text or
-            "RuntimeError: Attempted to exit cancel scope" in text):
+        if ("Task exception was never retrieved" in text
+            or "cancel scope in a different task" in text
+            or "RuntimeError: Attempted to exit cancel scope" in text):
             return  # Suppress these specific errors
         self.original_stderr.write(text)
-    
+
     def flush(self):
         self.original_stderr.flush()
-    
+
     def __getattr__(self, name):
         return getattr(self.original_stderr, name)
+
 
 # Install the filter at module import time
 _original_stderr = sys.stderr
@@ -329,8 +328,8 @@ class SupervisorAgent:
     workflow.add_node("execute_claude", self.execute_claude_session)
     workflow.add_node("collect_results", self.collect_session_results)
     workflow.add_node("validate_solution", self.validate_solution)
-    workflow.add_node("provide_guidance", self._provide_guidance)
-    workflow.add_node("finalize", self._finalize_solution)
+    workflow.add_node("provide_guidance", self.provide_guidance)
+    workflow.add_node("finalize", self.finalize_solution)
 
     workflow.add_edge(START, 'initiate_claude')
     workflow.add_edge("initiate_claude", 'execute_claude')
@@ -359,8 +358,8 @@ class SupervisorAgent:
 
   def initialize_llm(self):
     """Initialize the LLM for guidance analysis (OpenAI or AWS Bedrock)"""
-    model_config = self.config.model
-    provider = model_config.provider
+    agent_config = self.config.agent
+    provider = agent_config.provider
 
     if provider is None:
       raise ValueError("Model provider not specified in configuration. Please set 'provider' in the model config.")
@@ -374,8 +373,8 @@ class SupervisorAgent:
       if aws_key is None or aws_secret is None:
         raise ValueError("AWS credentials validation failed")
       return ChatBedrockConverse(
-        model=model_config.name,
-        temperature=model_config.temperature,
+        model=agent_config.model_name,
+        temperature=agent_config.temperature,
         aws_access_key_id=aws_key,
         aws_secret_access_key=aws_secret,
         region_name=aws_region,
@@ -385,8 +384,8 @@ class SupervisorAgent:
       if not os.getenv('OPENAI_API_KEY'):
         raise ValueError("OpenAI API key not found in environment variables. Please set 'OPENAI_API_KEY'.")
       return ChatOpenAI(
-        model=model_config.name,
-        temperature=model_config.temperature,
+        model=agent_config.model_name,
+        temperature=agent_config.temperature,
       )
 
     else:
@@ -893,11 +892,11 @@ class SupervisorAgent:
         for name in dir(solution_module):
           if not name.startswith('_'):
             attr = getattr(solution_module, name)
-            if (callable(attr) and 
-                hasattr(attr, '__name__') and 
-                not isinstance(attr, type) and
-                hasattr(attr, '__module__') and
-                attr.__module__ == solution_module.__name__):
+            if (callable(attr)
+                and hasattr(attr, '__name__')
+                and not isinstance(attr, type)
+                and hasattr(attr, '__module__')
+                and attr.__module__ == solution_module.__name__):
               functions.append(attr)
         if functions:
           main_function = functions[0]  # Use the first callable function
@@ -967,7 +966,7 @@ class SupervisorAgent:
     except Exception:
       return False
 
-  def _provide_guidance(self, state: WorkflowState) -> WorkflowState:
+  def provide_guidance(self, state: WorkflowState) -> WorkflowState:
     """
     Provide intelligent guidance to Claude Code based on current situation.
 
@@ -1200,7 +1199,7 @@ Please update your todo list and continue working on the solution, addressing th
 
     return state
 
-  def _finalize_solution(self, state: WorkflowState) -> WorkflowState:
+  def finalize_solution(self, state: WorkflowState) -> WorkflowState:
     """Finalize the solution"""
     if state.is_solved:
       utils.print_with_timestamp(f"\n🎉 {utils.green(utils.bold('Solution completed successfully'))} after {state.current_iteration} iterations!")
@@ -1274,8 +1273,8 @@ Please update your todo list and continue working on the solution, addressing th
     self.problem_description = problem_description
     self.input_data = input_data
     self.output_data = output_data
-    self.solution_path = solution_path or self.config.agent.solution_filename
-    self.test_path = test_path or self.config.agent.test_filename
+    self.solution_path = solution_path
+    self.test_path = test_path
     self.integrate_into_codebase = solution_path is None and test_path is None
 
     # Prompt overrides
