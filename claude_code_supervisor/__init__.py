@@ -30,15 +30,12 @@ Example:
 
 from .__version__ import __version__, __author__, __email__, __description__
 from .supervisor import SupervisorAgent, WorkflowState
-from .data_manager import DataManager, DataInfo
 
 __all__ = [
-    '__version__',
-    '__author__',
-    '__email__',
-    '__description__',
-    'SupervisorAgent',
-    'WorkflowState',
-    'DataManager',
-    'DataInfo',
+  '__version__',
+  '__author__',
+  '__email__',
+  '__description__',
+  'SupervisorAgent',
+  'WorkflowState',
 ]
