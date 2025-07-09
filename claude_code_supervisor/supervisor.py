@@ -12,10 +12,12 @@ meet quality standards through automated testing.
 Key Features:
 - Session-based continuity with Claude Code SDK
 - Real-time progress monitoring via todo list tracking
-- LLM-powered error analysis and guidance generation
+- Intelligent feedback loops with LLM-powered guidance generation
 - Configurable timeouts and iteration limits
-- Comprehensive test execution and validation
-- Support for multiple AI providers (Anthropic, Bedrock)
+- Comprehensive test execution with detailed validation feedback
+- Support for multiple AI providers (Anthropic, AWS Bedrock, OpenAI)
+- Separation of static configuration from dynamic workflow state
+- Bring Your Own Model (BYOM) support for custom LLM integration
 
 Architecture:
 The supervisor uses LangGraph to orchestrate a workflow with these nodes:
@@ -28,7 +30,7 @@ The supervisor uses LangGraph to orchestrate a workflow with these nodes:
 
 Usage:
   agent = SupervisorAgent()
-  result = agent.process('Create a sorting function', example_output='sort([3,1,2]) -> [1,2,3]')
+  result = agent.process('Create a function that sorts a list in ascending order')
 """
 
 import os
@@ -58,18 +60,39 @@ import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*never awaited.*")
 warnings.filterwarnings("ignore", message=".*Task exception was never retrieved.*")
 warnings.filterwarnings("ignore", message=".*cancel scope in a different task.*")
+warnings.filterwarnings("ignore", message=".*Attempted to exit cancel scope in a different task.*")
 
 
 @dataclass
 class WorkflowState:
-  """Dynamic state that changes during workflow execution"""
+  """
+  Dynamic state that changes during workflow execution.
+
+  This dataclass contains only the state that changes as the workflow progresses,
+  while static configuration is stored as attributes on the SupervisorAgent.
+
+  Fields:
+    Workflow Progress:
+      current_iteration: Number of iterations completed (0-based)
+      is_solved: Whether the problem has been successfully solved
+      error_message: Any error that occurred during execution
+      test_results: Output from running tests
+      messages: List of messages sent to Claude Code
+      validation_feedback: Detailed feedback from validation phase
+
+    Claude Session State:
+      claude_session_id: Unique ID of the current Claude Code session
+      claude_session_active: Whether a Claude session is currently running
+      claude_todos: List of todo items from Claude's TodoWrite tool
+      claude_log: Log of Claude's output and tool usage
+      should_terminate_early: Flag for early termination (e.g., quota exceeded)
+  """
   # Workflow progress
   current_iteration: int = 0
   is_solved: bool = False
   error_message: str = ""
   test_results: str = ""
   messages: list["str"] = field(default_factory=list)
-  solution_complete: bool = False
   validation_feedback: str = ""
 
   # Claude session state
@@ -99,29 +122,39 @@ class SupervisorAgent:
   5. Providing LLM-powered guidance when Claude encounters issues
   6. Managing session continuity across multiple iterations
 
-  Configuration:
-  - The agent is configured using the dataclasses available in `config.py`
+  Architecture:
+  - Uses LangGraph workflow orchestration for state management
+  - Separates static configuration (agent attributes) from dynamic state (WorkflowState)
+  - Integrates multiple LLM providers for guidance generation
+  - Supports both standalone file creation and codebase integration
 
   Key Features:
   - Session resumption for continuity across iterations
   - Configurable timeouts to prevent infinite loops
   - Real-time progress monitoring with timestamped logging
-  - Intelligent error analysis using OpenAI models
-  - Support for multiple AI providers (Anthropic, Bedrock, Vertex)
+  - LLM-powered error analysis and guidance generation
+  - Support for multiple AI providers (Anthropic, AWS Bedrock, OpenAI)
   - Comprehensive test execution with pytest integration
-  - Automatic guidance generation for failed attempts
+  - Intelligent feedback loops replacing passive test running
+  - Bring Your Own Model (BYOM) support for custom LLM integration
 
   Example:
       >>> # Basic usage
       >>> agent = SupervisorAgent()
       >>> result = agent.process(
-      >>>     'Create a function to calculate fibonacci numbers',
-      >>>     example_output='fib(8) should return 21'
+      >>>     'Create a function to calculate fibonacci numbers'
       >>> )
       >>>
-      >>> # With custom prompt
-      >>> agent = SupervisorAgent(custom_prompt='Use object-oriented design')
+      >>> # With custom system prompt
+      >>> agent = SupervisorAgent(append_system_prompt='Use object-oriented design')
       >>> result = agent.process('Create a calculator')
+      >>>
+      >>> # With input/output data
+      >>> result = agent.process(
+      >>>     'Sort this list in ascending order',
+      >>>     input_data=[3, 1, 4, 1, 5],
+      >>>     output_data=[1, 1, 3, 4, 5]
+      >>> )
       >>>
       >>> # Bring Your Own Model (BYOM)
       >>> from langchain_openai import ChatOpenAI
@@ -131,21 +164,26 @@ class SupervisorAgent:
       >>>
       >>> # Check if solved
       >>> if result.is_solved:
-      >>>     print(f'Solution: {result.solution_path}')
-      >>>     print(f'Tests: {result.test_path}')
+      >>>     print(f'Solution: {agent.solution_path}')
+      >>>     print(f'Tests: {agent.test_path}')
       >>> else:
       >>>     print(f'Error: {result.error_message}')
 
   Args:
-    custom_prompt: Optional additional instructions for Claude Code
     llm: Optional LangChain LLM model for guidance (BYOM - Bring Your Own Model)
+    config: Optional SupervisorConfig instance for agent configuration
+    append_system_prompt: Optional additional instructions appended to Claude's system prompt
 
   Attributes:
-    config: Configuration for the supervisor agent
-    custom_prompt: Optional additional instructions for Claude Code
-    llm: LLM instance for guidance generation (provided or configured)
+    config: Configuration for the supervisor agent (SupervisorConfig)
+    llm: LLM instance for guidance generation (provided or auto-configured)
     graph: LangGraph workflow compiled from node definitions
     base_claude_options: Pre-configured ClaudeCodeOptions for faster iterations
+    problem_description: Current problem being solved
+    input_data: Input data provided for the problem (if any)
+    output_data: Expected output data for validation (if any)
+    solution_path: Path where solution file will be saved
+    test_path: Path where test file will be saved
   """
 
   def __init__(
@@ -263,11 +301,11 @@ class SupervisorAgent:
       }
     )
     workflow.add_conditional_edges(
-      ' validate_solution',
+      'validate_solution',
       self.should_iterate,
       {
         'continue': 'provide_guidance',
-        ' finish': 'finalize',
+        'finish': 'finalize',
       }
     )
     workflow.add_edge("provide_guidance", 'execute_claude')
@@ -300,6 +338,8 @@ class SupervisorAgent:
       )
 
     elif provider == 'openai':
+      if not os.getenv('OPENAI_API_KEY'):
+        raise ValueError("OpenAI API key not found in environment variables. Please set 'OPENAI_API_KEY'.")
       return ChatOpenAI(
         model=model_config.name,
         temperature=model_config.temperature,
@@ -309,7 +349,18 @@ class SupervisorAgent:
       raise ValueError(f"Unsupported model provider: {provider}. Supported providers are 'openai' and 'bedrock'.")
 
   def initiate_claude_code_session(self, state: WorkflowState) -> WorkflowState:
-    """Prepare the initial setup for Claude Code session"""
+    """
+    Prepare the initial setup for Claude Code session.
+
+    This method builds the initial prompt with problem description, requirements,
+    and any input/output data, then stores it in the state for execution.
+
+    Args:
+      state: Current workflow state
+
+    Returns:
+      Updated state with claude_session_active=True and initial message
+    """
     utils.print_with_timestamp("\n🚀 Setting up Claude Code session...")
     utils.print_with_timestamp(f"Working directory: {os.getcwd()}")
     state.claude_session_active = True
@@ -399,7 +450,7 @@ class SupervisorAgent:
       cwd=self.base_claude_options.cwd,
       permission_mode=self.base_claude_options.permission_mode,
       max_turns=self.base_claude_options.max_turns,
-      system_prompt=self.base_claude_options.system_prompt,
+      append_system_prompt=self.base_claude_options.append_system_prompt,
       max_thinking_tokens=self.base_claude_options.max_thinking_tokens,
       continue_conversation=state.current_iteration > 0,
       resume=state.claude_session_id if state.claude_session_id else None
@@ -493,108 +544,278 @@ class SupervisorAgent:
     return 'validate'
 
   def validate_solution(self, state: WorkflowState) -> WorkflowState:
-    """Validate the solution created by Claude Code"""
+    """
+    Validate the solution created by Claude Code and provide detailed feedback.
+
+    This method performs comprehensive validation including:
+    1. Checking if solution and test files exist
+    2. Running tests to verify correctness
+    3. Extracting output data if input data was provided
+    4. Generating detailed validation feedback for failed cases
+
+    Unlike passive test running, this generates specific feedback that guides
+    Claude's next iteration rather than just reporting pass/fail status.
+
+    Args:
+      state: Current workflow state
+
+    Returns:
+      Updated state with is_solved status and validation_feedback
+    """
     utils.print_with_timestamp("\n🔍 Validating Claude's solution...")
+
+    # Reset validation state
+    state.is_solved = False
+    state.validation_feedback = ""
 
     if self.integrate_into_codebase:
       # In integration mode, we validate by running tests on the entire codebase
       utils.print_debug("Integration mode: validating codebase changes...")
       state = self._run_integration_tests(state)
     else:
-      # Standard mode: check if both files exist
+      # Standard mode: check if both files exist first
+      missing_files = []
       if not os.path.exists(self.solution_path):
-        state.error_message = f"Solution file {self.solution_path} not created"
-        state.is_solved = False
-        return state
-
+        missing_files.append(f"Solution file {self.solution_path}")
       if not os.path.exists(self.test_path):
-        state.error_message = f"Test file {self.test_path} not created"
-        state.is_solved = False
+        missing_files.append(f"Test file {self.test_path}")
+
+      if missing_files:
+        state.validation_feedback = f"Missing required files: {', '.join(missing_files)}. Please create these files before proceeding."
+        utils.print_error(f"Missing files: {', '.join(missing_files)}")
         return state
 
       # Run the tests to validate
       state = self._run_tests(state)
 
-    # If tests passed and we have input data, try to extract output data
-    if state.is_solved and self.input_data is not None:
-      state = self._extract_output_data(state)
+    # Determine final state based on validation results
+    if state.is_solved and not state.validation_feedback:
+      # Tests passed and no feedback - solution is complete
+      utils.print_success("✅ Solution validation successful - marking as complete")
+
+      # Extract output data if needed (for data science workflows)
+      if self.input_data is not None:
+        state = self._extract_output_data(state)
+        # If output extraction fails, it doesn't invalidate the solution
+        # since tests already passed
+    elif state.validation_feedback:
+      # We have specific feedback - continue iteration
+      utils.print_info(f"📋 Validation feedback generated - will continue iteration")
+      state.is_solved = False  # Ensure we continue iterating
+    else:
+      # Tests failed but no specific feedback yet - need to analyze
+      if state.error_message:
+        state.validation_feedback = f"Implementation has errors that need to be fixed: {state.error_message}"
+      else:
+        state.validation_feedback = "Tests are not passing. Please review and fix the implementation."
+      state.is_solved = False
 
     return state
 
   def should_iterate(self, state: WorkflowState) -> str:
-    """If the solution is invalid, provide guidance and prepare for the next iteration"""
-    if state.solution_complete:
+    """If the solution is valid, finish; otherwise provide guidance and continue iteration"""
+    if state.is_solved:
       utils.print_with_timestamp("✅ Solution appears complete, finalizing")
       return 'finish'
     return 'continue'
 
   def _run_integration_tests(self, state: WorkflowState) -> WorkflowState:
-    """Run tests in integration mode where solution is integrated into codebase"""
+    """Run tests in integration mode using LLM analysis of Claude's output"""
     utils.print_with_timestamp("\n🧪 Running integration tests...")
 
     try:
-      # Look for test files in the codebase and run them
-      # This is a simplified approach - in practice, you might want to
-      # run specific test patterns or use project-specific test commands
-      
-      # First, try to find test files
-      test_files = []
-      for root, _, files in os.walk('.'):
-        for file in files:
-          if file.endswith('_test.py') or file.startswith('test_'):
-            test_files.append(os.path.join(root, file))
-      
-      if not test_files:
-        # If no test files found, assume integration was successful
-        # This might be the case when tests are added to existing files
-        state.is_solved = True
-        state.test_results = "No separate test files found - assuming integration successful"
-        utils.print_success("No separate test files found, assuming integration successful")
+      # Use LLM to analyze Claude's output and determine test strategy
+      test_strategy = self._analyze_claude_output_for_testing(state)
+
+      if test_strategy['test_type'] == 'no_tests':
+        state.validation_feedback = "No tests were created or mentioned. Please create appropriate tests for your implementation."
+        utils.print_warning("No tests found - requesting test creation")
         return state
-      
-      # Run the tests
-      timeout = self.config.agent.test_timeout
-      result = subprocess.run(
-        [sys.executable, '-m', 'pytest'] + test_files + ['-v', '--tb=short', '--no-header'],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=os.getcwd()
-      )
-      
+
+      # Execute the recommended test strategy
+      if test_strategy['test_type'] == 'specific':
+        result = self._run_specific_tests(test_strategy['test_files'])
+      else:
+        result = self._run_all_integration_tests()
+
       state.test_results = (f"Exit code: {result.returncode}\n"
                            f"STDOUT:\n{result.stdout}\n"
                            f"STDERR:\n{result.stderr}")
-      state.is_solved = result.returncode == 0
-      
-      if state.is_solved:
-        utils.print_success("All integration tests passed!")
+
+      if result.returncode == 0:
+        state.is_solved = True
+        utils.print_success("✅ All integration tests passed!")
         print(f"Test output:\n{result.stdout}")
       else:
-        utils.print_error(f"Integration tests failed (exit code: {result.returncode})")
+        state.is_solved = False
+        # Generate detailed feedback instead of just error message
+        state.validation_feedback = self._generate_test_failure_feedback(result, test_strategy)
+        utils.print_error(f"❌ Integration tests failed (exit code: {result.returncode})")
         print(f"Test output:\n{result.stdout}")
         if result.stderr:
           print(f"Errors:\n{result.stderr}")
-        state.error_message = f"Integration test failures: {result.stdout}\n{result.stderr}"
-        
+
     except subprocess.TimeoutExpired:
       timeout = self.config.agent.test_timeout
       state.test_results = f"Integration tests timed out after {timeout} seconds"
       state.is_solved = False
-      state.error_message = f"Integration tests timed out after {timeout} seconds"
+      state.validation_feedback = f"Tests are taking too long to execute (>{timeout}s). Consider optimizing your implementation or breaking down complex tests."
       utils.print_with_timestamp(f"⏰ Integration tests timed out after {timeout} seconds")
     except FileNotFoundError:
       state.test_results = "pytest not found. Please install pytest: pip install pytest"
       state.is_solved = False
-      state.error_message = "pytest not found"
+      state.validation_feedback = "Testing framework not available. Please ensure pytest is installed in your environment."
       utils.print_error("pytest not found. Install with: pip install pytest")
     except Exception as e:
       state.test_results = f"Error running integration tests: {str(e)}"
       state.is_solved = False
-      state.error_message = f"Error running integration tests: {str(e)}"
+      state.validation_feedback = f"Error occurred while running tests: {str(e)}. Please check your test implementation."
       utils.print_error(f"Error running integration tests: {str(e)}")
-    
+
     return state
+
+  def _analyze_claude_output_for_testing(self, state: WorkflowState) -> dict:
+    """Use LLM to analyze Claude's output and determine test strategy"""
+    # Get recent Claude output to analyze
+    recent_output = "\n".join(state.claude_log[-5:]) if state.claude_log else "No recent output"
+
+    # Find available test files
+    test_files = []
+    for root, _, files in os.walk('.'):
+      for file in files:
+        if file.endswith('_test.py') or file.startswith('test_'):
+          test_files.append(os.path.join(root, file))
+
+    # Extract mentioned items from Claude's output
+    mentioned_items = self._extract_mentioned_items(recent_output)
+
+    # Use LLM to analyze and determine strategy
+    from .prompts import test_analysis_template
+    analysis_prompt = test_analysis_template().format(
+      claude_output=recent_output,
+      mentioned_items=mentioned_items,
+      available_test_files=test_files
+    )
+
+    analysis = self._call_llm("test_analysis", analysis_prompt)
+
+    # Parse the analysis to determine strategy
+    strategy = self._parse_test_strategy(analysis, test_files)
+
+    utils.print_debug(f"Test strategy determined: {strategy}")
+    return strategy
+
+  def _extract_mentioned_items(self, output: str) -> str:
+    """Extract files, functions, and classes mentioned in Claude's output"""
+    import re
+
+    # Look for common patterns in Claude's output
+    patterns = [
+      r'function[s]?\s+(\w+)',
+      r'class[es]?\s+(\w+)',
+      r'file[s]?\s+(\w+\.py)',
+      r'test[s]?\s+(\w+)',
+      r'created?\s+(\w+\.py)',
+      r'modified?\s+(\w+\.py)'
+    ]
+
+    mentioned = []
+    for pattern in patterns:
+      matches = re.findall(pattern, output, re.IGNORECASE)
+      mentioned.extend(matches)
+
+    return ", ".join(set(mentioned)) if mentioned else "No specific items mentioned"
+
+  def _parse_test_strategy(self, analysis: str, available_files: list) -> dict:
+    """Parse LLM analysis into actionable test strategy"""
+    analysis_lower = analysis.lower()
+
+    # Default strategy
+    strategy = {
+      'test_type': 'integration',
+      'test_files': available_files,
+      'command': [sys.executable, '-m', 'pytest'] + available_files + ['-v', '--tb=short', '--no-header']
+    }
+
+    # Look for specific instructions in the analysis
+    if 'no test' in analysis_lower or 'no separate test' in analysis_lower:
+      strategy['test_type'] = 'no_tests'
+    elif 'specific' in analysis_lower and any(f in analysis for f in available_files):
+      # Extract specific files mentioned
+      specific_files = [f for f in available_files if f in analysis]
+      if specific_files:
+        strategy['test_type'] = 'specific'
+        strategy['test_files'] = specific_files
+        strategy['command'] = [sys.executable, '-m', 'pytest'] + specific_files + ['-v', '--tb=short', '--no-header']
+
+    return strategy
+
+  def _run_specific_tests(self, test_files: list) -> subprocess.CompletedProcess:
+    """Run specific test files"""
+    timeout = self.config.agent.test_timeout
+    return subprocess.run(
+      [sys.executable, '-m', 'pytest'] + test_files + ['-v', '--tb=short', '--no-header'],
+      capture_output=True,
+      text=True,
+      timeout=timeout,
+      cwd=os.getcwd()
+    )
+
+  def _run_all_integration_tests(self) -> subprocess.CompletedProcess:
+    """Run all integration tests"""
+    # Find all test files
+    test_files = []
+    for root, _, files in os.walk('.'):
+      for file in files:
+        if file.endswith('_test.py') or file.startswith('test_'):
+          test_files.append(os.path.join(root, file))
+
+    if not test_files:
+      # Create a dummy result if no tests found
+      return subprocess.CompletedProcess(
+        args=['pytest'],
+        returncode=0,
+        stdout="No test files found",
+        stderr=""
+      )
+
+    timeout = self.config.agent.test_timeout
+    return subprocess.run(
+      [sys.executable, '-m', 'pytest'] + test_files + ['-v', '--tb=short', '--no-header'],
+      capture_output=True,
+      text=True,
+      timeout=timeout,
+      cwd=os.getcwd()
+    )
+
+  def _generate_test_failure_feedback(self, result: subprocess.CompletedProcess, strategy: dict) -> str:
+    """Generate detailed feedback for test failures"""
+    feedback_parts = []
+
+    if result.returncode != 0:
+      feedback_parts.append(f"Tests failed with exit code {result.returncode}.")
+
+      # Analyze common failure patterns
+      if "FAILED" in result.stdout:
+        failures = [line for line in result.stdout.split('\n') if 'FAILED' in line]
+        feedback_parts.append(f"Failed tests: {', '.join(failures[:3])}")
+
+      if "ImportError" in result.stderr or "ModuleNotFoundError" in result.stderr:
+        feedback_parts.append("Import errors detected - check your module imports and file structure.")
+
+      if "AssertionError" in result.stdout:
+        feedback_parts.append("Assertion errors detected - your implementation may not be producing expected results.")
+
+      if "SyntaxError" in result.stderr:
+        feedback_parts.append("Syntax errors detected - check your code for syntax issues.")
+
+      # Add strategy-specific feedback
+      if strategy['test_type'] == 'specific':
+        feedback_parts.append(f"Focus on fixing the specific test files: {', '.join(strategy['test_files'])}")
+
+      feedback_parts.append("Please review the test output above and fix the identified issues.")
+
+    return " ".join(feedback_parts)
 
   def _extract_output_data(self, state: WorkflowState) -> WorkflowState:
     """Extract output data by running the solution with input data"""
@@ -608,7 +829,7 @@ class SupervisorAgent:
       spec = importlib.util.spec_from_file_location("solution_module", self.solution_path)
       if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load module from {self.solution_path}")
-      
+
       solution_module = importlib.util.module_from_spec(spec)
       spec.loader.exec_module(solution_module)
 
@@ -623,13 +844,23 @@ class SupervisorAgent:
 
       if main_function is None:
         # If no standard function found, try to find any callable function
-        functions = [getattr(solution_module, name) for name in dir(solution_module)
-                    if callable(getattr(solution_module, name)) and not name.startswith('_')]
+        # Filter out types, built-in functions, and imports
+        functions = []
+        for name in dir(solution_module):
+          if not name.startswith('_'):
+            attr = getattr(solution_module, name)
+            if (callable(attr) and 
+                hasattr(attr, '__name__') and 
+                not isinstance(attr, type) and
+                hasattr(attr, '__module__') and
+                attr.__module__ == solution_module.__name__):
+              functions.append(attr)
         if functions:
           main_function = functions[0]  # Use the first callable function
 
       if main_function is not None:
-        utils.print_debug(f"Found function: {main_function.__name__}")
+        func_name = getattr(main_function, '__name__', str(main_function))
+        utils.print_debug(f"Found function: {func_name}")
 
         # Try to call the function with input data
         try:
@@ -640,7 +871,7 @@ class SupervisorAgent:
             # Call without arguments
             result = main_function()
 
-          state.output_data = result
+          self.output_data = result
           utils.print_success(f"Output data extracted: {type(result).__name__}")
 
           # Validate against expected output if provided
@@ -693,41 +924,40 @@ class SupervisorAgent:
       return False
 
   def _provide_guidance(self, state: WorkflowState) -> WorkflowState:
-    """Provide guidance to Claude Code when it encounters issues"""
-    utils.print_with_timestamp("\n🎯 Analyzing errors and providing guidance...")
+    """
+    Provide intelligent guidance to Claude Code based on current situation.
+
+    This is the core of the intelligent feedback loop. It analyzes the current state
+    and generates specific, actionable guidance using an LLM. Handles two modes:
+    1. Error mode: When explicit errors occurred during execution
+    2. Validation mode: When tests failed or validation feedback is available
+
+    Args:
+      state: Current workflow state with error_message or validation_feedback
+
+    Returns:
+      Updated state with guidance message for Claude and cleared error state
+    """
+    utils.print_with_timestamp("\n🎯 Analyzing situation and providing guidance...")
 
     # Increment iteration counter
     state.current_iteration += 1
     utils.print_with_timestamp(f"🔄 Starting iteration {state.current_iteration}")
 
-    # Analyze the current situation
-    analysis_prompt = f"""\
-Analyze this Claude Code implementation failure and provide specific guidance for the next iteration.
+    # Determine guidance mode based on state
+    if state.error_message:
+      # Error mode: Handle explicit errors
+      guidance = self._generate_error_guidance(state)
+      utils.print_with_timestamp("📋 Error guidance generated:")
+    elif state.validation_feedback:
+      # Feedback mode: Handle validation feedback
+      guidance = self._generate_feedback_guidance(state)
+      utils.print_with_timestamp("📋 Validation feedback guidance generated:")
+    else:
+      # Fallback mode: General guidance
+      guidance = "Continue working on the problem. Review your current progress and ensure all requirements are met."
+      utils.print_with_timestamp("📋 General guidance generated:")
 
-Problem: {self.problem_description}
-{f'Expected behavior: {self.example_output}' if self.example_output else ''}
-
-Current Issues:
-- Error: {state.error_message}
-- Test Results: {state.test_results if state.test_results else 'No tests run yet'}
-- Current Iteration: {state.current_iteration}
-
-Claude's Todo Progress:
-{self._format_todos_for_analysis(state.claude_todos)}
-
-Claude's Recent Output:
-{self._format_output_log_for_analysis(state.claude_log)}
-
-Provide specific, actionable guidance for Claude Code to fix these issues:
-1. What went wrong?
-2. What specific steps should Claude take next?
-3. What should Claude focus on or avoid?
-
-Keep your response concise and actionable (2-3 bullet points).
-"""
-
-    guidance = self._call_llm("error_analysis", analysis_prompt)
-    utils.print_with_timestamp("📋 Guidance generated:")
     utils.print_with_timestamp(guidance)
 
     # Store guidance in message buffer for next iteration
@@ -740,10 +970,50 @@ Please update your todo list and continue working on the solution, addressing th
 """
 
     state.messages.append(guidance_message)
-    state.error_message = ""  # Clear the error after providing guidance
-    state.test_results = ""  # Clear previous test results
+
+    # Clear state for next iteration
+    state.error_message = ""
+    state.test_results = ""
+    state.validation_feedback = ""
 
     return state
+
+  def _generate_error_guidance(self, state: WorkflowState) -> str:
+    """Generate guidance for error cases using LLM"""
+    from .prompts import error_guidance_template
+
+    example_output_section = f'Expected behavior: {self.example_output}' if self.example_output else ''
+
+    analysis_prompt = error_guidance_template().format(
+      problem_description=self.problem_description,
+      example_output_section=example_output_section,
+      error_message=state.error_message,
+      test_results=state.test_results if state.test_results else 'No tests run yet',
+      current_iteration=state.current_iteration,
+      todo_progress=self._format_todos_for_analysis(state.claude_todos),
+      recent_output=self._format_output_log_for_analysis(state.claude_log)
+    )
+
+    return self._call_llm("error_analysis", analysis_prompt)
+
+  def _generate_feedback_guidance(self, state: WorkflowState) -> str:
+    """Generate guidance for validation feedback using LLM"""
+    from .prompts import feedback_guidance_template
+
+    example_output_section = f'Expected behavior: {self.example_output}' if self.example_output else ''
+
+    # Get recent messages from Claude's log
+    recent_messages = "\n".join(state.claude_log[-3:]) if state.claude_log else "No recent messages"
+
+    analysis_prompt = feedback_guidance_template().format(
+      problem_description=self.problem_description,
+      example_output_section=example_output_section,
+      validation_feedback=state.validation_feedback,
+      recent_messages=recent_messages,
+      todo_progress=self._format_todos_for_analysis(state.claude_todos)
+    )
+
+    return self._call_llm("feedback_analysis", analysis_prompt)
 
   def _format_todos_for_analysis(self, todos: list[dict]) -> str:
     """Format todo list for LLM analysis"""
@@ -802,13 +1072,14 @@ Please update your todo list and continue working on the solution, addressing th
       return error_msg
 
   def _run_tests(self, state: WorkflowState) -> WorkflowState:
-    """Execute the tests"""
+    """Execute the tests and provide detailed feedback"""
     utils.print_with_timestamp("\n▶️  Running tests...")
 
     # Check if test file exists and has content
     if not os.path.exists(self.test_path):
       state.test_results = f"Test file {self.test_path} does not exist"
       state.is_solved = False
+      state.validation_feedback = f"Test file {self.test_path} was not created. Please create comprehensive tests for your solution."
       utils.print_error(f"Test file not found: {self.test_path}\n")
       return state
 
@@ -817,6 +1088,7 @@ Please update your todo list and continue working on the solution, addressing th
       state.test_results = (f"Solution file {self.solution_path} "
                             'does not exist')
       state.is_solved = False
+      state.validation_feedback = f"Solution file {self.solution_path} was not created. Please implement your solution first."
       utils.print_error(f"Solution file not found: {self.solution_path}\n")
       return state
 
@@ -833,6 +1105,7 @@ Please update your todo list and continue working on the solution, addressing th
           utils.print_error(error_msg)
           state.test_results = error_msg
           state.is_solved = False
+          state.validation_feedback = f"Syntax error in {file_type} file: {e}. Please fix the syntax errors and ensure your code is valid Python."
           return state
 
       # Run the tests
@@ -848,36 +1121,37 @@ Please update your todo list and continue working on the solution, addressing th
       state.test_results = (f"Exit code: {result.returncode}\n"
                             f"STDOUT:\n{result.stdout}\n"
                             f"STDERR:\n{result.stderr}")
-      state.is_solved = result.returncode == 0
 
-      if state.is_solved:
+      if result.returncode == 0:
+        state.is_solved = True
         utils.print_success(utils.green('All tests passed!'))
         print(f"Test output:\n{result.stdout}")
       else:
+        state.is_solved = False
+        # Generate detailed feedback instead of just error message
+        state.validation_feedback = self._generate_test_failure_feedback(result, {'test_type': 'specific', 'test_files': [self.test_path]})
         utils.print_error(f"{utils.red('Tests failed')} (exit code: {result.returncode})")
         print(f"Test output:\n{result.stdout}")
         if result.stderr:
           print(f"Errors:\n{utils.red(result.stderr)}")
-        # Store error for guidance
-        state.error_message = f"Test failures: {result.stdout}\n{result.stderr}"
       print()
 
     except subprocess.TimeoutExpired:
       timeout = self.config.agent.test_timeout
       state.test_results = f"Tests timed out after {timeout} seconds"
       state.is_solved = False
-      state.error_message = f"Tests timed out after {timeout} seconds"
+      state.validation_feedback = f"Tests are taking too long to execute (>{timeout}s). Consider optimizing your implementation or breaking down complex tests."
       utils.print_with_timestamp(f"⏰ Tests timed out after {timeout} seconds\n")
     except FileNotFoundError:
       state.test_results = ("pytest not found. "
                             'Please install pytest: pip install pytest')
       state.is_solved = False
-      state.error_message = 'pytest not found'
+      state.validation_feedback = "Testing framework not available. Please ensure pytest is installed in your environment."
       utils.print_error("pytest not found. Install with: pip install pytest\n")
     except Exception as e:
       state.test_results = f"Error running tests: {str(e)}"
       state.is_solved = False
-      state.error_message = f"Error running tests: {str(e)}"
+      state.validation_feedback = f"Error occurred while running tests: {str(e)}. Please check your test implementation."
       utils.print_error(f"Error running tests: {str(e)}\n")
 
     return state
@@ -885,9 +1159,8 @@ Please update your todo list and continue working on the solution, addressing th
   def _finalize_solution(self, state: WorkflowState) -> WorkflowState:
     """Finalize the solution"""
     if state.is_solved:
-      utils.print_with_timestamp(f"\n🎉 {utils.green(utils.bold('Solution completed successfully'))} after "
-            f"{state.current_iteration} iterations!")
-      
+      utils.print_with_timestamp(f"\n🎉 {utils.green(utils.bold('Solution completed successfully'))} after {state.current_iteration} iterations!")
+
       if self.integrate_into_codebase:
         utils.print_debug(utils.green('Solution integrated into existing codebase'))
         utils.print_debug(utils.green('Tests integrated into existing test structure'))
@@ -895,14 +1168,13 @@ Please update your todo list and continue working on the solution, addressing th
         utils.print_with_timestamp(f"💾 {utils.cyan('Code saved to:')} {self.solution_path}")
         utils.print_with_timestamp(f"💾 {utils.cyan('Tests saved to:')} {self.test_path}")
 
-      if state.output_data is not None:
-        utils.print_with_timestamp(f"📊 {utils.cyan('Output data:')} {type(state.output_data).__name__}")
-        if hasattr(state.output_data, '__len__') and len(state.output_data) < 20:
-          utils.print_with_timestamp(f"📊 {utils.cyan('Result:')} {state.output_data}")
+      if self.output_data is not None:
+        utils.print_with_timestamp(f"📊 {utils.cyan('Output data:')} {type(self.output_data).__name__}")
+        if hasattr(self.output_data, '__len__') and len(self.output_data) < 20:
+          utils.print_with_timestamp(f"📊 {utils.cyan('Result:')} {self.output_data}")
 
       if not self.integrate_into_codebase:
-        utils.print_with_timestamp(f"\n🚀 {utils.yellow('You can run the tests manually with:')} "
-              f"pytest {self.test_path}")
+        utils.print_with_timestamp(f"\n🚀 {utils.yellow('You can run the tests manually with:')} pytest {self.test_path}")
     else:
       # Check if this is a credit/quota error that caused early termination
       if state.should_terminate_early and state.error_message and "Credit/Quota Error" in state.error_message:
@@ -916,7 +1188,7 @@ Please update your todo list and continue working on the solution, addressing th
       else:
         utils.print_with_timestamp(f"\n❌ {utils.red('Maximum iterations')} ({self.config.agent.max_iterations}) {utils.red('reached without solving the problem.')}")
         utils.print_with_timestamp(f"📝 {utils.yellow('Last error:')} {utils.red(state.error_message)}")
-      
+
       if not self.integrate_into_codebase:
         utils.print_with_timestamp("\n📁 Files generated (may contain partial solutions):")
         if os.path.exists(self.solution_path):

@@ -12,6 +12,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import utils
 
 
 def create_sample_data():
@@ -68,10 +69,9 @@ Return format: [{'product': 'name', 'category': 'cat', 'total_value': float}, ..
 
     # Process with inventory data as input
     result = agent.process(
-      problem_description=problem,
+      problem,
       input_data=inventory_data,
-      expected_output=expected_output,
-      data_format='list',
+      output_data=expected_output,
       solution_path='solution.py',
       test_path='test_solution.py',
     )
@@ -111,6 +111,11 @@ Return format: [{'product': 'name', 'category': 'cat', 'total_value': float}, ..
     # Show test results if available
     if result.test_results:
       print(f"\nTest execution details:\n{result.test_results}")
+
+    # Show validation feedback and last Claude message
+    if result.validation_feedback:
+      print(f'\n{utils.red("Validation Feedback :")}\n{result.validation_feedback}')
+    print(f"\n{utils.blue(f"Last Claude Message:\n{result.claude_log[-1]}")}")
 
   except Exception as e:
     print(f"Error processing inventory data: {e}")

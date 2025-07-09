@@ -13,6 +13,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import utils
 
 
 def main():
@@ -45,19 +46,19 @@ calc.get_history() -> ['5 + 3 = 8', '4 * 2 = 8']'''
     print('Processing... (this may take a few minutes)')
 
     result = agent.process(
-      problem_description=problem,
+      problem,
       example_output=example_output,
       solution_path='solution.py',
       test_path='test_solution.py',
     )
 
-    print_results(result)
+    print_results(result, agent)
 
   except Exception as e:
     print(f'Error in OOP example: {e}')
 
 
-def print_results(result):
+def print_results(result, agent):
   """Print results in a consistent format"""
   print()
   print('=' * 60)
@@ -79,8 +80,9 @@ def print_results(result):
       print(f'Error: {result.error_message}')
     print(f'Iterations: {result.current_iteration}/{agent.config.agent.max_iterations}')
 
-  if result.latest_guidance:
-    print(f'Guidance provided: {len(result.latest_guidance)} times')
+  if result.validation_feedback:
+    print(f'\n{utils.red("Validation Feedback :")}\n{result.validation_feedback}')
+  print(f"\n{utils.blue(f"Last Claude Message:\n{result.claude_log[-1]}")}")  
 
 
 if __name__ == '__main__':

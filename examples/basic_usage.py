@@ -12,6 +12,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import utils
 
 
 def main():
@@ -28,18 +29,17 @@ def main():
     return
 
   # Define a simple programming problem
-  problem = 'Create a function called \'fibonacci\' that calculates the nth Fibonacci number using recursion'
-  example_output = 'fibonacci(8) should return 21'
+  problem = '''Create a function called 'fibonacci' that calculates the nth Fibonacci number using recursion.
+
+Example: fibonacci(8) should return 21'''
 
   print(f'Problem: {problem}')
-  print(f'Expected: {example_output}')
   print()
 
   # Process the problem
   print('Processing... (this may take a few minutes)')
   result = agent.process(
     problem,
-    example_output=example_output,
     solution_path='solution.py',
     test_path='test_solution.py',
   )
@@ -65,9 +65,10 @@ def main():
       print(f'Error: {result.error_message}')
     print(f'Completed iterations: {result.current_iteration}/{agent.config.agent.max_iterations}')
 
-  # Show latest guidance if any
-  if result.latest_guidance:
-    print(f'\nLatest guidance: {result.latest_guidance}')
+  # Show results
+  if result.validation_feedback:
+    print(f'\n{utils.red("Validation Feedback :")}\n{result.validation_feedback}')
+  print(f"\n{utils.blue(f"Last Claude Message:\n{result.claude_log[-1]}")}")
 
 
 if __name__ == '__main__':

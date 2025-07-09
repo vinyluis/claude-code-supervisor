@@ -9,9 +9,9 @@ An intelligent wrapper around Claude Code SDK that provides automated problem-so
 ## 🚀 Features
 
 - **Automated Problem Solving**: Describes problems to Claude Code and gets complete solutions
-- **Session Management**: Maintains context across multiple iterations
-- **Progress Monitoring**: Tracks Claude's progress via todo list updates and output analysis
-- **Intelligent Feedback**: Provides guidance when Claude encounters issues
+- **Session Management**: Maintains context across multiple iterations with intelligent workflow orchestration
+- **Progress Monitoring**: Real-time tracking of Claude's progress via todo list updates and output analysis
+- **Intelligent Feedback Loop**: LLM-powered guidance generation that analyzes Claude's work and provides specific, actionable feedback when issues arise
 - **Data I/O Support**: Handles various data formats (lists, dicts, CSV, DataFrames, etc.)
 - **Custom Prompts**: Guide implementation toward specific patterns or requirements
 - **Test Automation**: Automatically generates and runs tests for solutions
@@ -91,8 +91,7 @@ if result.is_solved:
 result = agent.process(
     "Sort this list in ascending order",
     input_data=[64, 34, 25, 12, 22, 11, 90, 5],
-    expected_output=[5, 11, 12, 22, 25, 34, 64, 90],
-    data_format="list"
+    output_data=[5, 11, 12, 22, 25, 34, 64, 90]
 )
 ```
 
@@ -101,7 +100,7 @@ result = agent.process(
 ```python
 # Guide implementation style
 agent = SupervisorAgent(
-    custom_prompt="Use object-oriented programming with SOLID principles"
+    append_system_prompt="Use object-oriented programming with SOLID principles"
 )
 
 result = agent.process("Create a calculator with basic operations")
@@ -307,7 +306,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- [Claude Code SDK](https://github.com/anthropics/claude-code-sdk) for the core Claude Code integration
+- [Claude Code SDK](https://github.com/anthropics/claude-code-sdk-python) for the core Claude Code integration
 - [LangGraph](https://github.com/langchain-ai/langgraph) for workflow orchestration
 - [LangChain](https://github.com/langchain-ai/langchain) for LLM integrations
 
