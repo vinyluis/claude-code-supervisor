@@ -185,8 +185,16 @@ class SupervisorAgent:
       >>> # Basic usage
       >>> agent = SupervisorAgent()
       >>> result = agent.process(
-      >>>     'Create a function to calculate fibonacci numbers'
+      >>>     'Create a function to calculate fibonacci numbers',
+      >>>     solution_path='solution.py',
+      >>>     test_path='test_solution.py'
       >>> )
+      >>>
+      >>> # With custom configuration
+      >>> from claude_code_supervisor.config import openai_config
+      >>> config = openai_config(model_name='gpt-4o-mini', temperature=0.2)
+      >>> agent = SupervisorAgent(config=config)
+      >>> result = agent.process('Create a calculator')
       >>>
       >>> # With custom system prompt
       >>> agent = SupervisorAgent(append_system_prompt='Use object-oriented design')
@@ -196,7 +204,9 @@ class SupervisorAgent:
       >>> result = agent.process(
       >>>     'Sort this list in ascending order',
       >>>     input_data=[3, 1, 4, 1, 5],
-      >>>     output_data=[1, 1, 3, 4, 5]
+      >>>     output_data=[1, 1, 3, 4, 5],
+      >>>     solution_path='sorter.py',
+      >>>     test_path='test_sorter.py'
       >>> )
       >>>
       >>> # Bring Your Own Model (BYOM)

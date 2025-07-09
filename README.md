@@ -15,7 +15,7 @@ An intelligent wrapper around Claude Code SDK that provides automated problem-so
 - **Data I/O Support**: Handles various data formats (lists, dicts, CSV, DataFrames, etc.)
 - **Custom Prompts**: Guide implementation toward specific patterns or requirements
 - **Test Automation**: Automatically generates and runs tests for solutions
-- **Multiple Providers**: Support for Anthropic, AWS Bedrock, and Google Vertex AI
+- **Multiple Providers**: Support for Anthropic, AWS Bedrock, and OpenAI
 
 ## 📦 Installation
 
@@ -76,12 +76,13 @@ agent = SupervisorAgent()
 # Solve a problem
 result = agent.process(
     "Create a function to calculate fibonacci numbers",
-    example_output="fib(8) should return 21"
+    solution_path='solution.py',
+    test_path='test_solution.py'
 )
 
 if result.is_solved:
-    print(f"Solution: {result.solution_path}")
-    print(f"Tests: {result.test_path}")
+    print(f"Solution: {agent.solution_path}")
+    print(f"Tests: {agent.test_path}")
 ```
 
 ### With Input/Output Data
@@ -124,13 +125,16 @@ result = agent.process("Create a data processing function")
 from claude_code_supervisor import SupervisorAgent
 from claude_code_supervisor.config import openai_config
 
-config = openai_config(model='gpt-4o-mini', temperature=0.1)
+config = openai_config(model_name='gpt-4o-mini', temperature=0.1)
 config.agent.max_iterations = 3
-config.agent.solution_filename = 'my_solution.py'
 config.claude_code.max_turns = 25
 
 agent = SupervisorAgent(config=config)
-result = agent.process("Create a web scraper function")
+result = agent.process(
+    "Create a web scraper function",
+    solution_path='scraper.py',
+    test_path='test_scraper.py'
+)
 ```
 
 ### Advanced Configuration Examples
@@ -139,7 +143,7 @@ result = agent.process("Create a web scraper function")
 # Use structured, type-safe configuration with dataclasses
 from claude_code_supervisor import SupervisorAgent
 from claude_code_supervisor.config import (
-    SupervisorConfig, ModelConfig, AgentConfig,
+    SupervisorConfig, AgentConfig, ClaudeCodeConfig,
     development_config, openai_config, bedrock_config
 )
 
@@ -148,18 +152,30 @@ config = development_config()  # Pre-configured for development
 agent = SupervisorAgent(config=config)
 
 # Method 2: Use builder functions with customization
-config = openai_config(model='gpt-4o-mini', temperature=0.2)
+config = openai_config(model_name='gpt-4o-mini', temperature=0.2)
 config.agent.max_iterations = 5
-config.agent.solution_filename = 'custom_solution.py'
 agent = SupervisorAgent(config=config)
 
 # Method 3: Build from scratch with type safety
 config = SupervisorConfig(
-    model=ModelConfig(name='gpt-4o', temperature=0.1, provider='openai'),
-    agent=AgentConfig(max_iterations=3, test_timeout=60)
+    agent=AgentConfig(
+        model_name='gpt-4o',
+        temperature=0.1,
+        provider='openai',
+        max_iterations=3,
+        test_timeout=60
+    ),
+    claude_code=ClaudeCodeConfig(
+        max_turns=20,
+        use_bedrock=False
+    )
 )
 agent = SupervisorAgent(config=config)
-result = agent.process("Create a validation function")
+result = agent.process(
+    "Create a validation function",
+    solution_path='validator.py',
+    test_path='test_validator.py'
+)
 ```
 
 ### Combining Configuration with Custom LLM
@@ -176,24 +192,19 @@ guidance_llm = ChatBedrockConverse(
     temperature=0.1,
 )
 
-# Type-safe configuration (no model config needed since we provide LLM)
+# Type-safe configuration (model settings in custom LLM are ignored when llm is provided)
 config = SupervisorConfig(
-    agent=AgentConfig(max_iterations=2, solution_filename='solution.py')
+    agent=AgentConfig(max_iterations=2, test_timeout=45)
 )
 
 agent = SupervisorAgent(config=config, llm=guidance_llm)
-result = agent.process("Create a file parser")
+result = agent.process(
+    "Create a file parser",
+    solution_path='parser.py',
+    test_path='test_parser.py'
+)
 ```
 
-### Command Line Interface
-
-```bash
-# Basic usage
-claude-supervisor "Create a hello world function"
-
-# With custom prompt
-claude-supervisor "Create a web scraper" --prompt="Use requests and BeautifulSoup"
-```
 
 ## 📊 Data Format Support
 
@@ -210,10 +221,15 @@ The supervisor supports various data formats:
 
 Check out the [examples directory](examples/) for detailed usage examples:
 
-- **Basic Usage**: Simple problem solving without I/O
-- **Data Processing**: Working with lists, dictionaries, and complex data
-- **Custom Prompts**: Guiding implementation toward specific patterns
-- **Advanced Scenarios**: Real-world data processing examples
+- **Basic Usage** (`basic_usage.py`): Simple problem solving without I/O
+- **Data Processing**: 
+  - `list_sorting_example.py`: Working with lists and numbers
+  - `dictionary_processing_example.py`: Processing employee dictionaries 
+  - `csv_processing_example.py`: Complex inventory data processing
+- **Custom Prompts**:
+  - `oop_prompt_example.py`: Object-oriented programming patterns
+  - `performance_prompt_example.py`: Performance-optimized implementations
+  - `data_science_prompt_example.py`: Data science best practices with pandas
 
 ## 🔧 Configuration
 
@@ -226,12 +242,12 @@ from claude_code_supervisor import SupervisorAgent
 from claude_code_supervisor.config import openai_config, bedrock_config
 
 # OpenAI configuration
-config = openai_config(model='gpt-4o-mini', temperature=0.2)
+config = openai_config(model_name='gpt-4o-mini', temperature=0.2)
 agent = SupervisorAgent(config=config)
 
 # AWS Bedrock configuration
 config = bedrock_config(
-  model='anthropic.claude-3-haiku-20240307-v1:0',
+  model_name='anthropic.claude-3-haiku-20240307-v1:0',
 )
 agent = SupervisorAgent(config=config)
 ```
@@ -240,19 +256,21 @@ agent = SupervisorAgent(config=config)
 
 ```python
 from claude_code_supervisor import SupervisorAgent
-from claude_code_supervisor.config import SupervisorConfig, ModelConfig, AgentConfig
+from claude_code_supervisor.config import SupervisorConfig, AgentConfig, ClaudeCodeConfig
 
 # Build custom configuration
 config = SupervisorConfig(
-  model=ModelConfig(
-    name='gpt-4o',
-    temperature=0.1,
-    provider='openai'
-  ),
   agent=AgentConfig(
+    model_name='gpt-4o',
+    temperature=0.1,
+    provider='openai',
     max_iterations=5,
-    solution_filename='solution.py',
-    test_filename='test_solution.py'
+    test_timeout=60
+  ),
+  claude_code=ClaudeCodeConfig(
+    max_turns=25,
+    use_bedrock=False,
+    max_thinking_tokens=8000
   )
 )
 
@@ -265,11 +283,11 @@ agent = SupervisorAgent(config=config)
 from claude_code_supervisor import SupervisorAgent
 from claude_code_supervisor.config import development_config, production_config
 
-# Development environment
+# Development environment (uses gpt-4o-mini, higher iterations)
 dev_config = development_config()
 dev_agent = SupervisorAgent(config=dev_config)
 
-# Production environment  
+# Production environment (uses gpt-4o, optimized settings)
 prod_config = production_config()
 prod_agent = SupervisorAgent(config=prod_config)
 ```
@@ -312,7 +330,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📚 Documentation
 
-For detailed documentation, visit our [docs](docs/) directory or check out the [API Reference](docs/api.md).
+For detailed usage examples, see the [examples directory](examples/) and the configuration examples above.
 
 ## 🐛 Issues
 
