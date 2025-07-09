@@ -205,8 +205,8 @@ def get_tool_info(tool_name: str, tool_input: dict) -> str:
 
 
 def display_credit_quota_error(error_message: str, use_bedrock: bool = False,
-                              current_iteration: int = 0, claude_todos: list = None,
-                              claude_output_log: list = None) -> None:
+                               current_iteration: int = 0, claude_todos: list = None,
+                               claude_log: list = None) -> None:
   """
   Display comprehensive error messaging for credit/quota issues.
 
@@ -215,12 +215,12 @@ def display_credit_quota_error(error_message: str, use_bedrock: bool = False,
     use_bedrock: Whether using AWS Bedrock (affects provider-specific guidance)
     current_iteration: Number of completed iterations
     claude_todos: List of todos attempted
-    claude_output_log: List of output log entries
+    claude_log: List of output log entries
   """
   if claude_todos is None:
     claude_todos = []
-  if claude_output_log is None:
-    claude_output_log = []
+  if claude_log is None:
+    claude_log = []
 
   print_with_timestamp(f"\n🚫 {red(bold('API Credit/Quota Error - Session Terminated'))}")
   print_with_timestamp("=" * 60)
@@ -321,7 +321,7 @@ def display_credit_quota_error(error_message: str, use_bedrock: bool = False,
     print_with_timestamp(f"- Tasks completed: {len(completed_todos)}/{len(claude_todos)}")
 
   # Show any partial work
-  if claude_output_log:
+  if claude_log:
     print_with_timestamp("- Some work was completed before the error occurred")
     print_with_timestamp("- You may be able to resume or retry with a smaller scope")
 
