@@ -57,10 +57,54 @@ from . import utils, prompts
 
 # Suppress asyncio warnings from the Claude Code SDK
 import warnings
+import sys
+import io
+import contextlib
+
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*never awaited.*")
 warnings.filterwarnings("ignore", message=".*Task exception was never retrieved.*")
 warnings.filterwarnings("ignore", message=".*cancel scope in a different task.*")
 warnings.filterwarnings("ignore", message=".*Attempted to exit cancel scope in a different task.*")
+
+class AsyncioErrorFilter:
+    """
+    A stderr filter that suppresses specific asyncio-related error messages from the Claude Code SDK.
+    
+    The Claude Code SDK uses anyio for async task management, which can generate harmless but
+    confusing error messages when tasks are cancelled or when cancel scopes exit in different
+    tasks. These errors don't affect functionality but create noise in the output.
+    
+    This filter intercepts stderr output and suppresses the following specific error patterns:
+    - "Task exception was never retrieved" 
+    - "cancel scope in a different task"
+    - "RuntimeError: Attempted to exit cancel scope in a different task"
+    
+    All other stderr output is passed through unchanged, preserving legitimate error messages.
+    
+    The filter is installed at module import time to ensure it catches errors that occur
+    during the cleanup phase of async operations.
+    """
+    
+    def __init__(self, original_stderr):
+        self.original_stderr = original_stderr
+        self.buffer = []
+    
+    def write(self, text):
+        if ("Task exception was never retrieved" in text or 
+            "cancel scope in a different task" in text or
+            "RuntimeError: Attempted to exit cancel scope" in text):
+            return  # Suppress these specific errors
+        self.original_stderr.write(text)
+    
+    def flush(self):
+        self.original_stderr.flush()
+    
+    def __getattr__(self, name):
+        return getattr(self.original_stderr, name)
+
+# Install the filter at module import time
+_original_stderr = sys.stderr
+sys.stderr = AsyncioErrorFilter(_original_stderr)
 
 
 @dataclass
