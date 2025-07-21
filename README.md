@@ -68,10 +68,10 @@ pip install -e .
 ### Basic Usage
 
 ```python
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import SingleShotSupervisorAgent
 
 # Initialize the agent
-agent = SupervisorAgent()
+agent = SingleShotSupervisorAgent()
 
 # Solve a problem
 result = agent.process(
@@ -84,6 +84,44 @@ if result.is_solved:
     print(f"Solution: {agent.solution_path}")
     print(f"Tests: {agent.test_path}")
 ```
+
+## 🎯 Supervisor Types
+
+Claude Code Supervisor provides two main supervisor types for different use cases:
+
+### FeedbackSupervisorAgent
+Iterative supervisor with intelligent feedback loops - continues refining solutions until success or max iterations:
+
+```python
+from claude_code_supervisor import FeedbackSupervisorAgent
+
+agent = FeedbackSupervisorAgent()
+result = agent.process("Create a complex sorting algorithm")
+# Will iterate with intelligent feedback until solved
+```
+
+**Best for:**
+- Complex problems requiring multiple iterations
+- Maximum solution quality with automated improvement
+- Problems where first attempts commonly fail
+- When you want intelligent error analysis and guidance
+
+### SingleShotSupervisorAgent
+Single-execution supervisor without iteration - fast, deterministic results:
+
+```python
+from claude_code_supervisor import SingleShotSupervisorAgent
+
+agent = SingleShotSupervisorAgent()
+result = agent.process("Create a simple utility function")
+# Executes once and reports results
+```
+
+**Best for:**
+- Simple problems that don't require iteration
+- Fast code generation and testing
+- When iteration is handled externally
+- Benchmarking Claude Code capabilities
 
 ### With Input/Output Data
 
@@ -100,7 +138,7 @@ result = agent.process(
 
 ```python
 # Guide implementation style
-agent = SupervisorAgent(
+agent = FeedbackSupervisorAgent(
     append_system_prompt="Use object-oriented programming with SOLID principles"
 )
 
@@ -114,7 +152,7 @@ result = agent.process("Create a calculator with basic operations")
 from langchain_openai import ChatOpenAI
 
 custom_llm = ChatOpenAI(model='gpt-4o-mini', temperature=0.2)
-agent = SupervisorAgent(llm=custom_llm)
+agent = FeedbackSupervisorAgent(llm=custom_llm)
 result = agent.process("Create a data processing function")
 ```
 
@@ -122,14 +160,14 @@ result = agent.process("Create a data processing function")
 
 ```python
 # Pass configuration as type-safe dataclass
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor.config import openai_config
 
 config = openai_config(model_name='gpt-4o-mini', temperature=0.1)
 config.agent.max_iterations = 3
 config.claude_code.max_turns = 25
 
-agent = SupervisorAgent(config=config)
+agent = FeedbackSupervisorAgent(config=config)
 result = agent.process(
     "Create a web scraper function",
     solution_path='scraper.py',
@@ -141,7 +179,7 @@ result = agent.process(
 
 ```python
 # Use structured, type-safe configuration with dataclasses
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor.config import (
     SupervisorConfig, AgentConfig, ClaudeCodeConfig,
     development_config, openai_config, bedrock_config
@@ -149,12 +187,12 @@ from claude_code_supervisor.config import (
 
 # Method 1: Use convenience functions
 config = development_config()  # Pre-configured for development
-agent = SupervisorAgent(config=config)
+agent = FeedbackSupervisorAgent(config=config)
 
 # Method 2: Use builder functions with customization
 config = openai_config(model_name='gpt-4o-mini', temperature=0.2)
 config.agent.max_iterations = 5
-agent = SupervisorAgent(config=config)
+agent = FeedbackSupervisorAgent(config=config)
 
 # Method 3: Build from scratch with type safety
 config = SupervisorConfig(
@@ -171,7 +209,7 @@ config = SupervisorConfig(
         tools=['Read', 'Write', 'Edit', 'Bash', 'TodoWrite']  # Custom tool set
     )
 )
-agent = SupervisorAgent(config=config)
+agent = FeedbackSupervisorAgent(config=config)
 result = agent.process(
     "Create a validation function",
     solution_path='validator.py',
@@ -184,7 +222,7 @@ result = agent.process(
 ```python
 # Use dataclass config + custom LLM together
 from langchain_aws import ChatBedrockConverse
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor.config import SupervisorConfig, AgentConfig
 
 # Custom LLM for guidance
@@ -198,7 +236,7 @@ config = SupervisorConfig(
     agent=AgentConfig(max_iterations=2, test_timeout=45)
 )
 
-agent = SupervisorAgent(config=config, llm=guidance_llm)
+agent = FeedbackSupervisorAgent(config=config, llm=guidance_llm)
 result = agent.process(
     "Create a file parser",
     solution_path='parser.py',
@@ -239,24 +277,24 @@ SupervisorAgent uses type-safe dataclass configuration for better IDE support an
 ### Quick Setup with Convenience Functions
 
 ```python
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor.config import openai_config, bedrock_config
 
 # OpenAI configuration
 config = openai_config(model_name='gpt-4o-mini', temperature=0.2)
-agent = SupervisorAgent(config=config)
+agent = FeedbackSupervisorAgent(config=config)
 
 # AWS Bedrock configuration
 config = bedrock_config(
   model_name='anthropic.claude-3-haiku-20240307-v1:0',
 )
-agent = SupervisorAgent(config=config)
+agent = FeedbackSupervisorAgent(config=config)
 ```
 
 ### Custom Configuration from Scratch
 
 ```python
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor.config import SupervisorConfig, AgentConfig, ClaudeCodeConfig
 
 # Build custom configuration
@@ -275,22 +313,22 @@ config = SupervisorConfig(
   )
 )
 
-agent = SupervisorAgent(config=config)
+agent = FeedbackSupervisorAgent(config=config)
 ```
 
 ### Environment-Specific Configurations
 
 ```python
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor.config import development_config, production_config
 
 # Development environment (uses gpt-4o-mini, higher iterations)
 dev_config = development_config()
-dev_agent = SupervisorAgent(config=dev_config)
+dev_agent = FeedbackSupervisorAgent(config=dev_config)
 
 # Production environment (uses gpt-4o, optimized settings)
 prod_config = production_config()
-prod_agent = SupervisorAgent(config=prod_config)
+prod_agent = FeedbackSupervisorAgent(config=prod_config)
 ```
 
 ### Tool Configuration
@@ -298,7 +336,7 @@ prod_agent = SupervisorAgent(config=prod_config)
 Claude Code has access to various tools. By default, all tools are enabled, but you can customize which tools are available:
 
 ```python
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor.config import SupervisorConfig, ClaudeCodeConfig
 from claude_code_supervisor.utils import ToolsEnum
 
