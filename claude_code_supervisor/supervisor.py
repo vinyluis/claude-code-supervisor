@@ -209,8 +209,8 @@ class BaseSupervisorAgent(ABC):
     # Static workflow configuration (set once per process call)
     self.problem_description: str = ""
     self.example_output: str | None = None
-    self.solution_path: str = ""
-    self.test_path: str = ""
+    self.solution_path: str | None = None
+    self.test_path: str | None = None
     self.input_data: utils.DataTypes | None = None
     self.output_data: utils.DataTypes | None = None
     self.data_format: str = 'auto'
@@ -1292,8 +1292,8 @@ Please update your todo list and continue working on the solution, addressing th
     self.problem_description = problem_description
     self.input_data = input_data
     self.output_data = output_data
-    self.solution_path = solution_path or self.config.agent.solution_filename
-    self.test_path = test_path or self.config.agent.test_filename
+    self.solution_path = solution_path
+    self.test_path = test_path
     self.integrate_into_codebase = solution_path is None and test_path is None
 
     # Prompt overrides
