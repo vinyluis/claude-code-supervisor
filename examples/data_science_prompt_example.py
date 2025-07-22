@@ -2,7 +2,7 @@
 """
 Data Science Prompt Example
 
-This example demonstrates how to use custom prompts to guide the SupervisorAgent
+This example demonstrates how to use custom prompts to guide the FeedbackSupervisorAgent
 toward data science best practices using pandas and numpy.
 """
 
@@ -12,7 +12,8 @@ import os
 # Add parent directory to path to import supervisor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
+from claude_code_supervisor import utils
 
 
 def main():
@@ -26,8 +27,8 @@ def main():
                         'descriptive statistics, and proper error handling for missing or invalid data.'
 
   try:
-    agent = SupervisorAgent(custom_prompt=data_science_prompt)
-    print('✓ SupervisorAgent initialized with data science prompt')
+    agent = FeedbackSupervisorAgent(custom_prompt=data_science_prompt)
+    print('✓ FeedbackSupervisorAgent initialized with data science prompt')
 
     input_data = [
       {'name': 'Alice', 'age': 25, 'score': 85.5, 'department': 'Engineering'},
@@ -54,21 +55,20 @@ def main():
     print('Processing...')
 
     result = agent.process(
-      problem_description=problem,
+      problem,
       input_data=input_data,
-      expected_output=expected_output,
-      data_format='list',
+      output_data=expected_output,
       solution_path='solution.py',
       test_path='test_solution.py',
     )
 
-    print_results(result)
+    print_results(result, agent)
 
   except Exception as e:
     print(f'Error in data science example: {e}')
 
 
-def print_results(result):
+def print_results(result, agent):
   """Print results in a consistent format"""
   print()
   print('=' * 60)
@@ -81,7 +81,7 @@ def print_results(result):
     print(f'Tests: {agent.test_path}')
     print(f'Iterations: {result.current_iteration}')
 
-    if result.output_data:
+    if agent.output_data:
       print('Output data generated: Yes')
 
   else:
@@ -90,8 +90,9 @@ def print_results(result):
       print(f'Error: {result.error_message}')
     print(f'Iterations: {result.current_iteration}/{agent.config.agent.max_iterations}')
 
-  if result.latest_guidance:
-    print(f'Guidance provided: {len(result.latest_guidance)} times')
+  if result.validation_feedback:
+    print(f'\n{utils.red("Validation Feedback :")}\n{result.validation_feedback}')
+  print(f"\n{utils.blue(f"Last Claude Message:\n{result.claude_log[-1]}")}")
 
 
 if __name__ == '__main__':

@@ -2,7 +2,7 @@
 """
 Dictionary Processing Example
 
-This example demonstrates using the SupervisorAgent with dictionary input/output data
+This example demonstrates using the FeedbackSupervisorAgent with dictionary input/output data
 to solve employee sorting problems.
 """
 
@@ -12,7 +12,8 @@ import os
 # Add parent directory to path to import supervisor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
+from claude_code_supervisor import utils
 
 
 def main():
@@ -22,10 +23,10 @@ def main():
 
   # Create supervisor agent
   try:
-    agent = SupervisorAgent()
-    print('✓ SupervisorAgent initialized successfully')
+    agent = FeedbackSupervisorAgent()
+    print('✓ FeedbackSupervisorAgent initialized successfully')
   except Exception as e:
-    print(f'✗ Failed to initialize SupervisorAgent: {e}')
+    print(f'✗ Failed to initialize FeedbackSupervisorAgent: {e}')
     return
 
   # Example: Dictionary processing
@@ -54,10 +55,9 @@ def main():
   print(f'Problem: {problem}')
 
   result = agent.process(
-    problem_description=problem,
+    problem,
     input_data=input_data,
-    expected_output=expected_output,
-    data_format='auto',
+    output_data=expected_output,
     solution_path='solution.py',
     test_path='test_solution.py',
   )
@@ -79,16 +79,15 @@ def print_results(example_name: str, result, agent):
     if result.output_data is not None:
       print(f'Generated output: {result.output_data}')
 
-    if agent.data_manager:
-      summary = agent.data_manager.get_summary()
-      print(f'Data operations: {summary["total_operations"]}')
-      print(f'Formats processed: {summary["formats_processed"]}')
-
   else:
     print('✗ Problem not solved')
     if result.error_message:
       print(f'Error: {result.error_message}')
     print(f'Completed iterations: {result.current_iteration}/{agent.config.agent.max_iterations}')
+
+  if result.validation_feedback:
+    print(f'\n{utils.red("Validation Feedback :")}\n{result.validation_feedback}')
+  print(f"\n{utils.blue(f"Last Claude Message:\n{result.claude_log[-1]}")}")
 
 
 if __name__ == '__main__':

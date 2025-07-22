@@ -2,7 +2,7 @@
 """
 Performance-Focused Prompt Example
 
-This example demonstrates how to use custom prompts to guide the SupervisorAgent
+This example demonstrates how to use custom prompts to guide the FeedbackSupervisorAgent
 toward performance-optimized implementations with Big O analysis.
 """
 
@@ -12,7 +12,8 @@ import os
 # Add parent directory to path to import supervisor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
+from claude_code_supervisor import utils
 
 
 def main():
@@ -26,8 +27,8 @@ def main():
                        'performance benchmarks in your tests and document the Big O complexity.'
 
   try:
-    agent = SupervisorAgent(custom_prompt=performance_prompt)
-    print('✓ SupervisorAgent initialized with performance prompt')
+    agent = FeedbackSupervisorAgent(custom_prompt=performance_prompt)
+    print('✓ FeedbackSupervisorAgent initialized with performance prompt')
 
     problem = 'Implement a function to find all prime numbers up to a given number N. '\
               'The function should be optimized for large values of N.'
@@ -41,21 +42,20 @@ def main():
     print('Processing...')
 
     result = agent.process(
-      problem_description=problem,
+      problem,
       input_data=input_data,
-      expected_output=expected_output,
-      data_format='auto',
+      output_data=expected_output,
       solution_path='solution.py',
       test_path='test_solution.py',
     )
 
-    print_results(result)
+    print_results(result, agent)
 
   except Exception as e:
     print(f'Error in performance example: {e}')
 
 
-def print_results(result):
+def print_results(result, agent):
   """Print results in a consistent format"""
   print()
   print('=' * 60)
@@ -77,8 +77,9 @@ def print_results(result):
       print(f'Error: {result.error_message}')
     print(f'Iterations: {result.current_iteration}/{agent.config.agent.max_iterations}')
 
-  if result.latest_guidance:
-    print(f'Guidance provided: {len(result.latest_guidance)} times')
+  if result.validation_feedback:
+    print(f'\n{utils.red("Validation Feedback :")}\n{result.validation_feedback}')
+  print(f"\n{utils.blue(f"Last Claude Message:\n{result.claude_log[-1]}")}")  
 
 
 if __name__ == '__main__':
