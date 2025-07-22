@@ -558,9 +558,9 @@ class BaseSupervisorAgent(ABC):
     else:
       # Standard mode: check if both files exist first
       missing_files = []
-      if not os.path.exists(self.solution_path):
+      if self.solution_path is not None and not os.path.exists(self.solution_path):
         missing_files.append(f"Solution file {self.solution_path}")
-      if not os.path.exists(self.test_path):
+      if self.test_path is not None and not os.path.exists(self.test_path):
         missing_files.append(f"Test file {self.test_path}")
 
       if missing_files:
@@ -1106,7 +1106,7 @@ Please update your todo list and continue working on the solution, addressing th
     utils.print_with_timestamp("\n▶️  Running tests...")
 
     # Check if test file exists and has content
-    if not os.path.exists(self.test_path):
+    if self.test_path is not None and not os.path.exists(self.test_path):
       state.test_results = f"Test file {self.test_path} does not exist"
       state.is_solved = False
       state.validation_feedback = f"Test file {self.test_path} was not created. Please create comprehensive tests for your solution."
@@ -1114,7 +1114,7 @@ Please update your todo list and continue working on the solution, addressing th
       return state
 
     # Check if solution file exists
-    if not os.path.exists(self.solution_path):
+    if self.solution_path is not None and not os.path.exists(self.solution_path):
       state.test_results = (f"Solution file {self.solution_path} "
                             'does not exist')
       state.is_solved = False
@@ -1560,9 +1560,9 @@ class SingleShotSupervisorAgent(BaseSupervisorAgent):
 
       if not self.integrate_into_codebase:
         utils.print_with_timestamp("\n📁 Files generated (may contain partial solutions):")
-        if os.path.exists(self.solution_path):
+        if self.solution_path is not None and os.path.exists(self.solution_path):
           utils.print_with_timestamp(f"  - {self.solution_path}")
-        if os.path.exists(self.test_path):
+        if self.test_path is not None and os.path.exists(self.test_path):
           utils.print_with_timestamp(f"  - {self.test_path}")
 
     return state
