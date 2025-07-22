@@ -377,7 +377,7 @@ def detect_errors_in_output(output_log: list) -> tuple[list, list, list]:
     'cannot', "can't", 'unable to', 'permission denied', 'file not found',
     'syntax error', 'import error', 'module not found', 'command not found'
   ]
-  
+
   # Context length errors that should trigger message reduction
   context_length_keywords = [
     'input is too long', 'context length exceeded', 'maximum context length',
@@ -432,7 +432,7 @@ def format_error_message(general_errors: list, credit_quota_errors: list, contex
   """
   if context_length_errors is None:
     context_length_errors = []
-    
+
   if credit_quota_errors:
     error_message = f"API Credit/Quota Error - Early Termination: {'; '.join(credit_quota_errors)}"
     should_terminate_early = True
@@ -456,39 +456,39 @@ def format_error_message(general_errors: list, credit_quota_errors: list, contex
 def reduce_message_length(message: str, reduction_factor: float = 0.7) -> str:
   """
   Reduce message length by removing non-essential parts while preserving core information.
-  
+
   Args:
     message: The message to reduce
     reduction_factor: Target reduction factor (0.7 means reduce to 70% of original length)
-  
+
   Returns:
     Reduced message that preserves essential information
   """
   if not message:
     return message
-    
+
   lines = message.split('\n')
   target_length = int(len(message) * reduction_factor)
-  
+
   # Priority order for content preservation:
   # 1. Problem description (usually at the beginning)
   # 2. Requirements/guidelines
   # 3. Input/output data (essential for data tasks)
   # 4. Examples (can be shortened)
   # 5. Verbose explanations (can be removed)
-  
+
   # Find key sections
   problem_lines = []
   requirements_lines = []
   data_lines = []
   example_lines = []
   other_lines = []
-  
+
   current_section = 'other'
-  
+
   for line in lines:
     line_lower = line.lower()
-    
+
     # Identify section types
     if any(keyword in line_lower for keyword in ['problem description', 'task:', 'create', 'implement', 'solve']):
       current_section = 'problem'
@@ -498,7 +498,7 @@ def reduce_message_length(message: str, reduction_factor: float = 0.7) -> str:
       current_section = 'data'
     elif any(keyword in line_lower for keyword in ['example', 'demonstration', 'usage']):
       current_section = 'example'
-    
+
     # Categorize lines
     if current_section == 'problem':
       problem_lines.append(line)
@@ -510,11 +510,11 @@ def reduce_message_length(message: str, reduction_factor: float = 0.7) -> str:
       example_lines.append(line)
     else:
       other_lines.append(line)
-  
+
   # Build reduced message with priority
   reduced_lines = []
   current_length = 0
-  
+
   # Always include problem description
   for line in problem_lines:
     if current_length + len(line) < target_length:
@@ -522,7 +522,7 @@ def reduce_message_length(message: str, reduction_factor: float = 0.7) -> str:
       current_length += len(line)
     else:
       break
-  
+
   # Include requirements (condensed)
   for line in requirements_lines:
     if current_length + len(line) < target_length:
@@ -535,7 +535,7 @@ def reduce_message_length(message: str, reduction_factor: float = 0.7) -> str:
       current_length += len(condensed_line)
     else:
       break
-  
+
   # Include essential data info
   for line in data_lines:
     if current_length + len(line) < target_length:
@@ -543,7 +543,7 @@ def reduce_message_length(message: str, reduction_factor: float = 0.7) -> str:
       current_length += len(line)
     else:
       break
-  
+
   # Include shortened examples if space allows
   for line in example_lines:
     if current_length + len(line) < target_length:
@@ -556,7 +556,7 @@ def reduce_message_length(message: str, reduction_factor: float = 0.7) -> str:
       current_length += len(shortened_line)
     else:
       break
-  
+
   # Include other essential lines if space allows
   for line in other_lines:
     if current_length + len(line) < target_length:
@@ -568,10 +568,10 @@ def reduce_message_length(message: str, reduction_factor: float = 0.7) -> str:
       current_length += len(shortened_line)
     else:
       break
-  
+
   # Add a note about message reduction
   reduced_message = '\n'.join(reduced_lines)
   if len(reduced_message) < len(message):
     reduced_message += '\n\n[NOTE: This message was automatically reduced to fit context limits. Focus on the core requirements above.]'
-  
+
   return reduced_message
