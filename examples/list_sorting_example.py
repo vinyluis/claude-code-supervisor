@@ -2,7 +2,7 @@
 """
 List Sorting Example
 
-This example demonstrates using the SupervisorAgent with input/output data
+This example demonstrates using the FeedbackSupervisorAgent with input/output data
 to solve a simple list sorting problem.
 """
 
@@ -12,7 +12,7 @@ import os
 # Add parent directory to path to import supervisor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor import utils
 
 
@@ -23,10 +23,10 @@ def main():
 
   # Create supervisor agent
   try:
-    agent = SupervisorAgent()
-    print('✓ SupervisorAgent initialized successfully')
+    agent = FeedbackSupervisorAgent()
+    print('✓ FeedbackSupervisorAgent initialized successfully')
   except Exception as e:
-    print(f'✗ Failed to initialize SupervisorAgent: {e}')
+    print(f'✗ Failed to initialize FeedbackSupervisorAgent: {e}')
     return
 
   # Example: List sorting

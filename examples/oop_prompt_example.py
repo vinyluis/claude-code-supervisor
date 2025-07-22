@@ -2,7 +2,7 @@
 """
 Object-Oriented Programming Prompt Example
 
-This example demonstrates how to use custom prompts to guide the SupervisorAgent
+This example demonstrates how to use custom prompts to guide the FeedbackSupervisorAgent
 toward object-oriented programming patterns and SOLID principles.
 """
 
@@ -12,7 +12,9 @@ import os
 # Add parent directory to path to import supervisor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from claude_code_supervisor import SupervisorAgent
+# Import supervisor types explicitly
+from claude_code_supervisor import FeedbackSupervisorAgent, SingleShotSupervisorAgent
+
 from claude_code_supervisor import utils
 
 
@@ -27,8 +29,8 @@ def main():
                'Follow SOLID principles and include proper docstrings for all classes and methods.'
 
   try:
-    agent = SupervisorAgent(custom_prompt=oop_prompt)
-    print('✓ SupervisorAgent initialized with OOP prompt')
+    agent = FeedbackSupervisorAgent(custom_prompt=oop_prompt)
+    print('✓ FeedbackSupervisorAgent initialized with OOP prompt')
 
     problem = 'Create a calculator that can perform basic arithmetic operations '\
               '(addition, subtraction, multiplication, division). It should handle errors '\

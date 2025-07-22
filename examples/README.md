@@ -7,13 +7,17 @@ This directory contains practical examples demonstrating how to use the Claude C
 ### Basic Usage
 - **`basic_usage.py`** - Simplest way to use SupervisorAgent without input/output data
 
+### Supervisor Types
+- **`feedback_usage.py`** - FeedbackSupervisorAgent with complex problems and iteration
+- **`singleshot_usage.py`** - SingleShotSupervisorAgent for fast, single-execution solutions
+
 ### Data Processing Examples
 - **`list_sorting_example.py`** - Sort a list of numbers with input/output data
 - **`dictionary_processing_example.py`** - Process employee dictionaries, sort by salary
 - **`csv_processing_example.py`** - Work with inventory data (simulated CSV processing)
 
 ### Custom Prompt Examples
-- **`oop_prompt_example.py`** - Object-oriented programming patterns and SOLID principles
+- **`oop_prompt_example.py`** - Object-oriented programming patterns and SOLID principles (shows import options)
 - **`performance_prompt_example.py`** - Performance-optimized implementations with Big O analysis
 - **`data_science_prompt_example.py`** - Data science best practices using pandas and numpy
 

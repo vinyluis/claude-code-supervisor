@@ -1,7 +1,7 @@
 """
-Basic SupervisorAgent Usage Example
+Basic FeedbackSupervisorAgent Usage Example
 
-This example demonstrates the simplest way to use the SupervisorAgent
+This example demonstrates the simplest way to use the FeedbackSupervisorAgent
 to solve a programming problem without any input/output data.
 """
 
@@ -11,21 +11,21 @@ import os
 # Add parent directory to path to import supervisor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor import utils
 
 
 def main():
   """Run a basic example without input/output data"""
-  print('=== Basic SupervisorAgent Usage Example ===')
+  print('=== Basic FeedbackSupervisorAgent Usage Example ===')
   print()
 
   # Create supervisor agent with default config
   try:
-    agent = SupervisorAgent()
-    print('✓ SupervisorAgent initialized successfully')
+    agent = FeedbackSupervisorAgent()
+    print('✓ FeedbackSupervisorAgent initialized successfully')
   except Exception as e:
-    print(f'✗ Failed to initialize SupervisorAgent: {e}')
+    print(f'✗ Failed to initialize FeedbackSupervisorAgent: {e}')
     return
 
   # Define a simple programming problem

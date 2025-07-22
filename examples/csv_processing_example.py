@@ -1,7 +1,7 @@
 """
 CSV Data Processing Example
 
-This example demonstrates using the SupervisorAgent to process CSV data,
+This example demonstrates using the FeedbackSupervisorAgent to process CSV data,
 showing how to work with file-based input and output.
 """
 
@@ -11,7 +11,7 @@ import os
 # Add parent directory to path to import supervisor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor import utils
 
 
@@ -33,10 +33,10 @@ def main():
 
   # Create supervisor agent
   try:
-    agent = SupervisorAgent()
-    print("✓ SupervisorAgent initialized successfully")
+    agent = FeedbackSupervisorAgent()
+    print("✓ FeedbackSupervisorAgent initialized successfully")
   except Exception as e:
-    print(f"✗ Failed to initialize SupervisorAgent: {e}")
+    print(f"✗ Failed to initialize FeedbackSupervisorAgent: {e}")
     return
 
   # Create sample inventory data (as if loaded from CSV)

@@ -243,7 +243,7 @@ class BaseSupervisorAgent(ABC):
 
     self.append_system_prompt = append_system_prompt
     self.initialize_claude_code()
-    
+
     # Build the workflow graph using the subclass implementation
     self.graph = self.build_graph()
 
@@ -284,7 +284,6 @@ class BaseSupervisorAgent(ABC):
       allowed_tools=claude_config.tools
     )
     utils.print_debug("Pre-configured Claude Code options")
-
 
   def initialize_llm(self):
     """Initialize the LLM for guidance analysis (OpenAI or AWS Bedrock)"""
@@ -447,9 +446,9 @@ class BaseSupervisorAgent(ABC):
     state.claude_session_active = False
     return state
 
-  def collect_session_results(self, state: WorkflowState) -> WorkflowState:
-    """Collect and analyze the results from Claude's session"""
-    utils.print_with_timestamp("\n📊 Collecting session results...")
+  def review_session(self, state: WorkflowState) -> WorkflowState:
+    """Review and analyze the results from Claude's session"""
+    utils.print_with_timestamp("\n📊 Reviewing session results...")
 
     # Check if files were created
     if self.solution_path is not None:
@@ -527,7 +526,7 @@ class BaseSupervisorAgent(ABC):
     utils.print_with_timestamp("🤔 Solution unclear, starting validation step")
     return 'validate'
 
-  def validate_solution(self, state: WorkflowState) -> WorkflowState:
+  def test_and_analyze(self, state: WorkflowState) -> WorkflowState:
     """
     Validate the solution created by Claude Code and provide detailed feedback.
 
@@ -908,7 +907,7 @@ class BaseSupervisorAgent(ABC):
     except Exception:
       return False
 
-  def provide_guidance(self, state: WorkflowState) -> WorkflowState:
+  def generate_guidance(self, state: WorkflowState) -> WorkflowState:
     """
     Provide intelligent guidance to Claude Code based on current situation.
 
@@ -1235,29 +1234,29 @@ Please update your todo list and continue working on the solution, addressing th
   def build_graph(self):
     """
     Build the LangGraph workflow for this supervisor type.
-    
+
     This method must be implemented by subclasses to define their specific
     workflow graph structure (feedback loops vs single-shot).
-    
+
     Returns:
         Compiled LangGraph workflow
     """
     raise NotImplementedError("Subclasses must implement the build_graph method")
-  
+
   def _get_process_start_message(self, problem_description: str) -> str:
     """
     Get the log message for the start of processing.
-    
+
     Can be overridden by subclasses for custom messaging.
-    
+
     Args:
         problem_description: The problem being solved
-        
+
     Returns:
         Log message string
     """
     return f"🚀 Starting problem solving: {problem_description}"
-  
+
   def process(
       self,
       problem_description: str, *,
@@ -1269,23 +1268,23 @@ Please update your todo list and continue working on the solution, addressing th
     ) -> WorkflowState:
     """
     Main method to process a problem using the workflow graph.
-    
+
     This method contains the common logic for both feedback and single-shot
     supervisors. The specific workflow behavior is determined by the graph
     built by the subclass's build_graph() method.
-    
+
     Args:
       problem_description: Description of the problem to solve
       input_data: Input data for Claude Code to work with (optional)
       output_data: Expected output for validation (optional)
       solution_path: Path to save solution file (optional, if None integrates into codebase)
       test_path: Path to save test file (optional, if None integrates into codebase)
-      
+
     Kwargs:
       development_guidelines: Custom development guidelines for Claude Code
       instruction_prompt: Custom instruction prompt for Claude Code
       test_instructions: Custom instructions for running tests
-      
+
     Returns:
       WorkflowState with results after processing complete
     """
@@ -1296,26 +1295,26 @@ Please update your todo list and continue working on the solution, addressing th
     self.solution_path = solution_path or self.config.agent.solution_filename
     self.test_path = test_path or self.config.agent.test_filename
     self.integrate_into_codebase = solution_path is None and test_path is None
-    
+
     # Prompt overrides
     self.development_guidelines = kwargs.get('development_guidelines') or prompts.development_guidelines()
     self.instruction_prompt = kwargs.get('instruction_prompt') or prompts.instruction_prompt()
     self.test_instructions = kwargs.get('test_instructions') or prompts.test_instructions(self.solution_path)
-    
+
     # Create simplified initial state
     initial_state = WorkflowState()
-    
+
     utils.print_with_timestamp(self._get_process_start_message(problem_description))
     try:
       final_state = self.graph.invoke(initial_state)
-      
+
       # Ensure we return a WorkflowState object
       if isinstance(final_state, dict):
         # Convert dict back to WorkflowState if needed
         final_state = WorkflowState(**final_state)
-      
+
       return final_state
-    
+
     except Exception as e:
       utils.print_error(f"Error during execution: {e}")
       initial_state.error_message = str(e)
@@ -1325,12 +1324,12 @@ Please update your todo list and continue working on the solution, addressing th
 class FeedbackSupervisorAgent(BaseSupervisorAgent):
   """
   Intelligent supervisor with iterative feedback loops for automated problem-solving.
-  
+
   This supervisor manages Claude Code sessions with comprehensive feedback mechanisms,
   analyzing failures and providing targeted guidance to improve solutions iteratively.
   Unlike single-shot execution, this supervisor continues refining the solution until
   it meets quality standards or reaches maximum iteration limits.
-  
+
   The supervisor works by:
   1. Initiating Claude Code sessions with structured problem descriptions
   2. Monitoring Claude's real-time progress through SDK message streaming
@@ -1338,15 +1337,15 @@ class FeedbackSupervisorAgent(BaseSupervisorAgent):
   4. Validating solutions by running automated tests with detailed feedback
   5. Providing LLM-powered guidance when Claude encounters issues
   6. Managing session continuity across multiple iterations with context management
-  
+
   Key Features:
   - Iterative refinement with intelligent feedback loops
-  - LLM-powered error analysis and guidance generation  
+  - LLM-powered error analysis and guidance generation
   - Context length management with message reduction
   - Comprehensive validation with detailed feedback
   - Session resumption for continuity across iterations
   - Support for both file creation and codebase integration modes
-  
+
   Example:
       >>> # Basic feedback supervisor
       >>> agent = FeedbackSupervisorAgent()
@@ -1366,81 +1365,80 @@ class FeedbackSupervisorAgent(BaseSupervisorAgent):
       >>>     print(f'Solved after {result.current_iteration} iterations')
       >>> else:
       >>>     print(f'Max iterations reached: {result.error_message}')
-  
+
   Args:
     llm: Optional LangChain LLM model for guidance generation
     config: Optional SupervisorConfig instance for agent configuration
     append_system_prompt: Optional additional instructions for Claude Code
   """
-  
+
   def _get_process_start_message(self, problem_description: str) -> str:
     """Get the log message for iterative problem solving start."""
     return f"🚀 Starting iterative problem solving: {problem_description}"
-  
+
   def build_graph(self):
     """Build the LangGraph workflow with feedback loops"""
     workflow = StateGraph(WorkflowState)
-    
+
     workflow.add_node("initiate_claude", self.initiate_claude_code_session)
     workflow.add_node("execute_claude", self.execute_claude_session)
-    workflow.add_node("collect_results", self.collect_session_results)
-    workflow.add_node("validate_solution", self.validate_solution)
-    workflow.add_node("provide_guidance", self.provide_guidance)
+    workflow.add_node("review_session", self.review_session)
+    workflow.add_node("test_and_analyze", self.test_and_analyze)
+    workflow.add_node("generate_guidance", self.generate_guidance)
     workflow.add_node("reduce_message", self.reduce_message_and_retry)
     workflow.add_node("finalize", self.finalize_solution)
-    
+
     workflow.add_edge(START, 'initiate_claude')
     workflow.add_edge("initiate_claude", 'execute_claude')
-    workflow.add_edge("execute_claude", 'collect_results')
+    workflow.add_edge("execute_claude", 'review_session')
     workflow.add_conditional_edges(
-      'collect_results',
+      'review_session',
       self.decide_next_action,
       {
-        'validate': 'validate_solution',
-        'guide': 'provide_guidance',
+        'validate': 'test_and_analyze',
+        'guide': 'generate_guidance',
         'reduce': 'reduce_message',
         'finish': 'finalize'
       }
     )
     workflow.add_conditional_edges(
-      'validate_solution',
+      'test_and_analyze',
       self.should_iterate,
       {
-        'continue': 'provide_guidance',
+        'continue': 'generate_guidance',
         'finish': 'finalize',
       }
     )
-    workflow.add_edge("provide_guidance", 'execute_claude')
+    workflow.add_edge("generate_guidance", 'execute_claude')
     workflow.add_edge("reduce_message", 'execute_claude')
     workflow.add_edge("finalize", END)
-    
+
     return workflow.compile()
-  
 
 
 class SingleShotSupervisorAgent(BaseSupervisorAgent):
   """
   Single-execution supervisor for Claude Code without iterative feedback loops.
-  
+
   This supervisor executes Claude Code once and reports results without attempting
   to fix issues or provide guidance for iteration. It's designed for scenarios where
   you want a fast, single-attempt solution or where feedback loops are handled
   externally.
-  
+
   The supervisor workflow is simplified to:
   1. Initiate Claude Code session with problem description
-  2. Execute the session until completion  
+  2. Execute the session until completion
   3. Collect results and analyze outputs
   4. Validate solution by running tests
   5. Report final status (success or failure)
-  
+
   Key Features:
   - Single execution without iteration
   - Fast and deterministic results
   - Full test validation and output data extraction
   - Same configuration and setup as feedback supervisor
   - Ideal for simple problems or external iteration control
-  
+
   Example:
       >>> # Basic single-shot execution
       >>> agent = SingleShotSupervisorAgent()
@@ -1450,40 +1448,121 @@ class SingleShotSupervisorAgent(BaseSupervisorAgent):
       >>>     test_path='test_reverse.py'
       >>> )
       >>>
-      >>> # Check if solved in single attempt  
+      >>> # Check if solved in single attempt
       >>> if result.is_solved:
       >>>     print('Problem solved in single shot!')
       >>> else:
       >>>     print(f'Failed: {result.error_message}')
       >>>     print('Consider using FeedbackSupervisorAgent for iteration')
-  
+
   Args:
     llm: Optional LangChain LLM model (not used in single-shot mode)
     config: Optional SupervisorConfig instance for agent configuration
     append_system_prompt: Optional additional instructions for Claude Code
   """
-  
+
   def _get_process_start_message(self, problem_description: str) -> str:
     """Get the log message for single-shot problem solving start."""
     return f"🚀 Starting single-shot problem solving: {problem_description}"
-  
+
+  def test_solution(self, state: WorkflowState) -> WorkflowState:
+    """Test the solution without generating feedback for iteration (single-shot only)"""
+    utils.print_with_timestamp("\n🔍 Testing single-shot solution...")
+
+    # Reset validation state
+    state.is_solved = False
+
+    if self.integrate_into_codebase:
+      # In integration mode, we validate by running tests on the entire codebase
+      utils.print_debug("Integration mode: testing codebase changes...")
+      state = self._run_integration_tests(state)
+    else:
+      # Standard mode: check if both files exist first
+      missing_files = []
+      if not os.path.exists(self.solution_path):
+        missing_files.append(f"Solution file {self.solution_path}")
+      if not os.path.exists(self.test_path):
+        missing_files.append(f"Test file {self.test_path}")
+
+      if missing_files:
+        utils.print_error(f"Missing files: {', '.join(missing_files)}")
+        return state
+
+      # Run the tests to validate
+      state = self._run_tests(state)
+
+    # For single-shot, we only care about pass/fail, no detailed feedback
+    if state.is_solved:
+      utils.print_success("✅ Single-shot solution validation successful")
+      # Extract output data if needed (for data science workflows)
+      if self.input_data is not None:
+        state = self._extract_output_data(state)
+    else:
+      utils.print_error("❌ Single-shot solution validation failed")
+
+    return state
+
   def build_graph(self):
     """Build the simplified LangGraph workflow without feedback loops"""
     workflow = StateGraph(WorkflowState)
-    
+
     workflow.add_node("initiate_claude", self.initiate_claude_code_session)
     workflow.add_node("execute_claude", self.execute_claude_session)
-    workflow.add_node("collect_results", self.collect_session_results)
+    workflow.add_node("review_session", self.review_session)
+    workflow.add_node("test_solution", self.test_solution)
     workflow.add_node("finalize", self.finalize_solution)
-    
-    # Linear workflow without validation since there's no feedback
+
+    # Linear workflow: review session → test solution → finalize
     workflow.add_edge(START, 'initiate_claude')
     workflow.add_edge("initiate_claude", 'execute_claude')
-    workflow.add_edge("execute_claude", 'collect_results')
-    workflow.add_edge("collect_results", 'finalize')
+    workflow.add_edge("execute_claude", 'review_session')
+    workflow.add_edge("review_session", 'test_solution')
+    workflow.add_edge("test_solution", 'finalize')
     workflow.add_edge("finalize", END)
-    
-    return workflow.compile()
-  
-  
 
+    return workflow.compile()
+
+  def finalize_solution(self, state: WorkflowState) -> WorkflowState:
+    """Finalize the single-shot solution without iteration checking"""
+    if state.is_solved:
+      utils.print_with_timestamp(f"\n🎉 {utils.green(utils.bold('Solution completed successfully'))} in single execution!")
+
+      if self.integrate_into_codebase:
+        utils.print_debug(utils.green('Solution integrated into existing codebase'))
+        utils.print_debug(utils.green('Tests integrated into existing test structure'))
+      else:
+        utils.print_with_timestamp(f"💾 {utils.cyan('Code saved to:')} {self.solution_path}")
+        utils.print_with_timestamp(f"💾 {utils.cyan('Tests saved to:')} {self.test_path}")
+
+      if self.output_data is not None:
+        utils.print_with_timestamp(f"📊 {utils.cyan('Output data:')} {type(self.output_data).__name__}")
+        if hasattr(self.output_data, '__len__') and len(self.output_data) < 20:
+          utils.print_with_timestamp(f"📊 {utils.cyan('Result:')} {self.output_data}")
+
+      if not self.integrate_into_codebase:
+        utils.print_with_timestamp(f"\n🚀 {utils.yellow('You can run the tests manually with:')} pytest {self.test_path}")
+    else:
+      # Single-shot failed - report the specific issues without mentioning iterations
+      if state.should_terminate_early and state.error_message and "Credit/Quota Error" in state.error_message:
+        utils.display_credit_quota_error(
+          error_message=state.error_message,
+          use_bedrock=self.config.claude_code.use_bedrock,
+          current_iteration=state.current_iteration,
+          claude_todos=state.claude_todos,
+          claude_log=state.claude_log
+        )
+      elif state.error_message:
+        utils.print_with_timestamp(f"\n❌ {utils.red('Single-shot execution encountered errors.')}")
+        utils.print_with_timestamp(f"📝 {utils.yellow('Error:')} {utils.red(state.error_message)}")
+      else:
+        utils.print_with_timestamp(f"\n❌ {utils.red('Single-shot execution completed but solution validation failed.')}")
+        utils.print_with_timestamp("📝 The solution may have issues that prevent tests from passing.")
+
+      if not self.integrate_into_codebase:
+        utils.print_with_timestamp("\n📁 Files generated (may contain partial solutions):")
+        if os.path.exists(self.solution_path):
+          utils.print_with_timestamp(f"  - {self.solution_path}")
+        if os.path.exists(self.test_path):
+          utils.print_with_timestamp(f"  - {self.test_path}")
+
+    return state

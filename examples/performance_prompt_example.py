@@ -2,7 +2,7 @@
 """
 Performance-Focused Prompt Example
 
-This example demonstrates how to use custom prompts to guide the SupervisorAgent
+This example demonstrates how to use custom prompts to guide the FeedbackSupervisorAgent
 toward performance-optimized implementations with Big O analysis.
 """
 
@@ -12,7 +12,7 @@ import os
 # Add parent directory to path to import supervisor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor import utils
 
 
@@ -27,8 +27,8 @@ def main():
                        'performance benchmarks in your tests and document the Big O complexity.'
 
   try:
-    agent = SupervisorAgent(custom_prompt=performance_prompt)
-    print('✓ SupervisorAgent initialized with performance prompt')
+    agent = FeedbackSupervisorAgent(custom_prompt=performance_prompt)
+    print('✓ FeedbackSupervisorAgent initialized with performance prompt')
 
     problem = 'Implement a function to find all prime numbers up to a given number N. '\
               'The function should be optimized for large values of N.'

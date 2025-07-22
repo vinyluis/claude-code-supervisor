@@ -2,7 +2,7 @@
 """
 Data Science Prompt Example
 
-This example demonstrates how to use custom prompts to guide the SupervisorAgent
+This example demonstrates how to use custom prompts to guide the FeedbackSupervisorAgent
 toward data science best practices using pandas and numpy.
 """
 
@@ -12,7 +12,7 @@ import os
 # Add parent directory to path to import supervisor
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from claude_code_supervisor import SupervisorAgent
+from claude_code_supervisor import FeedbackSupervisorAgent
 from claude_code_supervisor import utils
 
 
@@ -27,8 +27,8 @@ def main():
                         'descriptive statistics, and proper error handling for missing or invalid data.'
 
   try:
-    agent = SupervisorAgent(custom_prompt=data_science_prompt)
-    print('✓ SupervisorAgent initialized with data science prompt')
+    agent = FeedbackSupervisorAgent(custom_prompt=data_science_prompt)
+    print('✓ FeedbackSupervisorAgent initialized with data science prompt')
 
     input_data = [
       {'name': 'Alice', 'age': 25, 'score': 85.5, 'department': 'Engineering'},
