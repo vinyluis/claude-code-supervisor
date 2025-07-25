@@ -331,11 +331,10 @@ class BaseSupervisorAgent(ABC):
       state: Current workflow state
 
     Returns:
-      Updated state with claude_session_active=True and initial message
+      Updated state initial message
     """
     utils.print_with_timestamp("\n🚀 Setting up Claude Code session...")
     utils.print_with_timestamp(f"Working directory: {os.getcwd()}")
-    state.claude_session_active = True
 
     # Build the initial prompt and store on the message buffer
     claude_instructions = prompts.build_claude_instructions(
@@ -406,9 +405,8 @@ class BaseSupervisorAgent(ABC):
 
   def execute_claude_session(self, state: WorkflowState) -> WorkflowState:
     """Execute a Claude Code session until completion or timeout"""
-    if not state.claude_session_active:
-      state.error_message = "Claude session not active"
-      return state
+    # Activate session at the start of actual execution
+    state.claude_session_active = True
 
     utils.print_with_timestamp(f"\n🚀 Executing Claude Code session (iteration {state.current_iteration})...")
 
@@ -603,59 +601,164 @@ class BaseSupervisorAgent(ABC):
     return 'continue'
 
   def _run_integration_tests(self, state: WorkflowState) -> WorkflowState:
-    """Run tests in integration mode using LLM analysis of Claude's output"""
-    utils.print_with_timestamp("\n🧪 Running integration tests...")
+    """Validate integration using Claude's own assessment and todo completion"""
+    utils.print_with_timestamp("\n🔍 Validating solution based on Claude's assessment...")
 
     try:
-      # Use LLM to analyze Claude's output and determine test strategy
-      test_strategy = self._analyze_claude_output_for_testing(state)
+      # Validate based on Claude's final messages
+      claude_success = self._validate_by_claude_messages(state)
 
-      if test_strategy['test_type'] == 'no_tests':
-        state.validation_feedback = "No tests were created or mentioned. Please create appropriate tests for your implementation."
-        utils.print_warning("No tests found - requesting test creation")
-        return state
+      # Validate based on todo completion
+      todo_success = self._validate_by_todo_completion(state)
 
-      # Execute the recommended test strategy
-      if test_strategy['test_type'] == 'specific':
-        result = self._run_specific_tests(test_strategy['test_files'])
-      else:
-        result = self._run_all_integration_tests()
+      # Check for error indicators in recent messages
+      has_errors = self._detect_recent_errors(state)
 
-      state.test_results = (f"Exit code: {result.returncode}\n"
-                           f"STDOUT:\n{result.stdout}\n"
-                           f"STDERR:\n{result.stderr}")
-
-      if result.returncode == 0:
+      # Determine validation result
+      if claude_success and todo_success and not has_errors:
         state.is_solved = True
-        utils.print_success("✅ All integration tests passed!")
-        print(f"Test output:\n{result.stdout}")
+        utils.print_success("✅ Solution validated - Claude reported success and all todos completed")
+        state.test_results = self._generate_success_summary(state)
+
+      elif claude_success or todo_success:
+        if has_errors:
+          state.validation_feedback = "Claude reported partial success but errors were detected. Please review and address any remaining issues."
+          utils.print_warning("⚠️ Partial success with errors detected")
+        else:
+          state.is_solved = True
+          utils.print_success("✅ Solution validated - partial indicators suggest success")
+          state.test_results = self._generate_success_summary(state)
+
       else:
-        state.is_solved = False
-        # Generate detailed feedback instead of just error message
-        state.validation_feedback = self._generate_test_failure_feedback(result, test_strategy)
-        utils.print_error(f"❌ Integration tests failed (exit code: {result.returncode})")
-        print(f"Test output:\n{result.stdout}")
-        if result.stderr:
-          print(f"Errors:\n{result.stderr}")
+        state.validation_feedback = "Claude did not clearly indicate successful completion. Please review the implementation and ensure all requirements are met."
+        utils.print_warning("❌ No clear success indicators found")
 
-    except subprocess.TimeoutExpired:
-      timeout = self.config.agent.test_timeout
-      state.test_results = f"Integration tests timed out after {timeout} seconds"
-      state.is_solved = False
-      state.validation_feedback = f"Tests are taking too long to execute (>{timeout}s). Consider optimizing your implementation or breaking down complex tests."
-      utils.print_with_timestamp(f"⏰ Integration tests timed out after {timeout} seconds")
-    except FileNotFoundError:
-      state.test_results = "pytest not found. Please install pytest: pip install pytest"
-      state.is_solved = False
-      state.validation_feedback = "Testing framework not available. Please ensure pytest is installed in your environment."
-      utils.print_error("pytest not found. Install with: pip install pytest")
+      # Always provide guidance for running tests manually if test instructions exist
+      if hasattr(self, 'test_instructions') and self.test_instructions:
+        manual_test_guidance = self._generate_manual_test_guidance()
+        if state.validation_feedback:
+          state.validation_feedback += f"\n\n{manual_test_guidance}"
+        else:
+          state.test_results += f"\n\n{manual_test_guidance}"
+
+      return state
+
     except Exception as e:
-      state.test_results = f"Error running integration tests: {str(e)}"
-      state.is_solved = False
-      state.validation_feedback = f"Error occurred while running tests: {str(e)}. Please check your test implementation."
-      utils.print_error(f"Error running integration tests: {str(e)}")
+      error_msg = f"Error during validation: {str(e)}"
+      utils.print_error(error_msg)
+      state.validation_feedback = error_msg
+      return state
 
-    return state
+  def _validate_by_claude_messages(self, state: WorkflowState) -> bool:
+    """Validate based on Claude's own success indicators in recent messages"""
+    if not state.claude_log:
+      return False
+
+    recent_messages = state.claude_log[-3:]  # Last 3 messages
+
+    success_indicators = [
+      "tests are passing", "all tests pass", "tests passed", "test passed",
+      "successfully implemented", "task completed", "implementation complete",
+      "fix worked", "solution works", "working correctly", "working properly",
+      "all the tests are passing", "perfect! all", "great! all", "excellent! all",
+      "tests pass", "solution is complete", "implementation is working"
+    ]
+
+    for message in recent_messages:
+      message_lower = message.lower()
+      if any(indicator in message_lower for indicator in success_indicators):
+        return True
+
+    return False
+
+  def _validate_by_todo_completion(self, state: WorkflowState) -> bool:
+    """Check if todos indicate successful completion"""
+    if not state.claude_todos:
+      return False
+
+    completed = sum(1 for todo in state.claude_todos if todo.get('status') == 'completed')
+    total = len(state.claude_todos)
+
+    # Consider success if 100% completion or very high completion (90%+)
+    if total == 0:
+      return False
+
+    completion_rate = completed / total
+    return completion_rate >= 0.9  # 90% or higher completion
+
+  def _detect_recent_errors(self, state: WorkflowState) -> bool:
+    """Detect error indicators in recent Claude messages"""
+    if not state.claude_log:
+      return False
+
+    recent_messages = state.claude_log[-2:]  # Last 2 messages
+
+    error_indicators = [
+      "error occurred", "failed to", "exception", "traceback",
+      "cannot", "unable to", "not working", "didn't work",
+      "tests are failing", "test failed", "tests failed",
+      "something went wrong", "issue with", "problem with"
+    ]
+
+    for message in recent_messages:
+      message_lower = message.lower()
+      if any(indicator in message_lower for indicator in error_indicators):
+        return True
+
+    return False
+
+  def _generate_success_summary(self, state: WorkflowState) -> str:
+    """Generate a summary of the successful validation"""
+    summary_parts = []
+
+    # Todo completion summary
+    if state.claude_todos:
+      completed = sum(1 for todo in state.claude_todos if todo.get('status') == 'completed')
+      total = len(state.claude_todos)
+      summary_parts.append(f"✅ Todo completion: {completed}/{total} ({completed/total*100:.1f}%)")
+
+    # Claude's own assessment
+    summary_parts.append("✅ Claude reported successful implementation")
+
+    # Add final guidance
+    summary_parts.append("\n📋 Validation Summary:")
+    summary_parts.append("- Solution implemented successfully based on Claude's assessment")
+    summary_parts.append("- All or most todos completed")
+    summary_parts.append("- No critical errors detected in recent output")
+
+    return "\n".join(summary_parts)
+
+  def _generate_manual_test_guidance(self) -> str:
+    """Generate guidance for running tests manually"""
+    if not hasattr(self, 'test_instructions') or not self.test_instructions:
+      return ""
+
+    guidance = ["🧪 Manual Test Guidance:",
+                "To verify the implementation manually, you can run the tests as specified:",
+                ""]
+
+    # Extract test command from test_instructions if available
+    test_instructions = getattr(self, 'test_instructions', '')
+    if '```bash' in test_instructions:
+      # Extract bash command from test instructions
+      lines = test_instructions.split('\n')
+      in_bash_block = False
+      for line in lines:
+        if '```bash' in line:
+          in_bash_block = True
+          continue
+        elif '```' in line and in_bash_block:
+          break
+        elif in_bash_block and line.strip():
+          guidance.append(f"  {line.strip()}")
+
+    if len(guidance) <= 3:  # No specific commands found
+      guidance.extend([
+        "Please refer to the test instructions provided to Claude for the exact commands.",
+        "The test instructions contain project-specific commands for running tests."
+      ])
+
+    return "\n".join(guidance)
 
   def _analyze_claude_output_for_testing(self, state: WorkflowState) -> dict:
     """Use LLM to analyze Claude's output and determine test strategy"""

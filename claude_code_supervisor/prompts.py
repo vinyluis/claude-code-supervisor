@@ -67,19 +67,19 @@ def build_claude_instructions(
   return f"""\
 {instruction_prompt}
 
-### Requirements / Development Guidelines:
+## Requirements / Development Guidelines:
 {requirements}
 
-### Problem description:
+## Problem description:
 {problem_description}
 
-### Input Data:
+## Input Data:
 {input_data if input_data is not None else 'No input data provided.'}
 
-### Output Data:
+## Output Data:
 {output_data if output_data is not None else 'No output data provided.'}
 
-### Testing:
+## Testing:
 {test_instructions}
 
 Please start by creating a todo list to plan your approach, then implement the solution.
