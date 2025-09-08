@@ -12,6 +12,7 @@ An intelligent wrapper around Claude Code SDK that provides automated problem-so
 - **Session Management**: Maintains context across multiple iterations with intelligent workflow orchestration
 - **Progress Monitoring**: Real-time tracking of Claude's progress via todo list updates and output analysis
 - **Intelligent Feedback Loop**: LLM-powered guidance generation that analyzes Claude's work and provides specific, actionable feedback when issues arise
+- **🆕 Plan Mode**: Intelligent plan generation, review, and iterative refinement before execution (inspired by validation patterns)
 - **Data I/O Support**: Handles various data formats (lists, dicts, CSV, DataFrames, etc.)
 - **Custom Prompts**: Guide implementation toward specific patterns or requirements
 - **Test Automation**: Automatically generates and runs tests for solutions
@@ -175,6 +176,33 @@ result = agent.process(
 )
 ```
 
+### 🆕 With Plan Mode (Intelligent Planning)
+
+```python
+# Enable plan mode with intelligent review and refinement
+from claude_code_supervisor import FeedbackSupervisorAgent
+from claude_code_supervisor.config import plan_mode_config
+
+config = plan_mode_config(
+    max_plan_iterations=3,
+    plan_auto_approval_threshold=0.8,
+    plan_review_enabled=True
+)
+
+agent = FeedbackSupervisorAgent(config=config)
+result = agent.process(
+    "Create a comprehensive calculator module with advanced operations",
+    solution_path='calculator.py',
+    test_path='test_calculator.py'
+)
+
+# Plan mode workflow:
+# 1. Generates execution plan using Claude Code's plan mode
+# 2. LLM reviews plan and scores quality (0.0-1.0)
+# 3. Iteratively refines plan based on feedback (if needed)
+# 4. Executes approved plan with full implementation
+```
+
 ### Advanced Configuration Examples
 
 ```python
@@ -261,6 +289,7 @@ The supervisor supports various data formats:
 Check out the [examples directory](examples/) for detailed usage examples:
 
 - **Basic Usage** (`basic_usage.py`): Simple problem solving without I/O
+- **🆕 Plan Mode** (`plan_mode_example.py`): Intelligent planning with review and refinement
 - **Data Processing**: 
   - `list_sorting_example.py`: Working with lists and numbers
   - `dictionary_processing_example.py`: Processing employee dictionaries 
@@ -320,7 +349,10 @@ agent = FeedbackSupervisorAgent(config=config)
 
 ```python
 from claude_code_supervisor import FeedbackSupervisorAgent
-from claude_code_supervisor.config import development_config, production_config
+from claude_code_supervisor.config import (
+    development_config, production_config,
+    plan_mode_config, plan_mode_development_config
+)
 
 # Development environment (uses gpt-4o-mini, higher iterations)
 dev_config = development_config()
@@ -329,6 +361,18 @@ dev_agent = FeedbackSupervisorAgent(config=dev_config)
 # Production environment (uses gpt-4o, optimized settings)
 prod_config = production_config()
 prod_agent = FeedbackSupervisorAgent(config=prod_config)
+
+# 🆕 Plan mode configurations
+# Thorough plan review for complex tasks
+plan_config = plan_mode_config(
+    max_plan_iterations=5,
+    plan_auto_approval_threshold=0.9
+)
+plan_agent = FeedbackSupervisorAgent(config=plan_config)
+
+# Plan mode optimized for development
+dev_plan_config = plan_mode_development_config()
+dev_plan_agent = FeedbackSupervisorAgent(config=dev_plan_config)
 ```
 
 ### Tool Configuration

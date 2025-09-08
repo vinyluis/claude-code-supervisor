@@ -146,6 +146,11 @@ def magenta(text: str) -> str:
   return f"\033[95m{text}\033[0m"
 
 
+def orange(text: str) -> str:
+  """Add orange color to text for plan content"""
+  return f"\033[38;5;208m{text}\033[0m"
+
+
 def bold(text: str) -> str:
   """Make text bold"""
   return f"\033[1m{text}\033[0m"
@@ -575,3 +580,40 @@ def reduce_message_length(message: str, reduction_factor: float = 0.7) -> str:
     reduced_message += '\n\n[NOTE: This message was automatically reduced to fit context limits. Focus on the core requirements above.]'
 
   return reduced_message
+
+
+# Plan Mode Utility Functions
+
+def print_plan_summary(plan_text: str):
+  """Print plan summary with formatting"""
+  print_with_timestamp(f"{cyan('Plan Summary:')} {plan_text}")
+
+def print_plan_approved(plan_text: str):
+  """Print approved plan with formatting"""
+  print(f"\n{green('🎉 APPROVED EXECUTION PLAN:')}\n")
+  print(f"{cyan(plan_text)}\n")
+
+def print_plan_review(score: float, status: str):
+  """Print plan review status"""
+  color_func = green if score >= 0.8 else yellow if score >= 0.6 else red
+  print_with_timestamp(f"📋 Plan Review: {color_func(f'{score:.2f}/1.0')} - {status}")
+
+
+def print_plan_content(plan_content: str):
+  """Print plan content with orange formatting for visibility"""
+  print(f"\n{orange('📋 EXECUTION PLAN:')}")
+  print(f"{orange('=' * 60)}")
+  # Split plan into lines and add orange prefix for better visibility
+  for line in plan_content.split('\n'):
+    if line.strip():
+      print(f"{orange('│')} {line}")
+    else:
+      print(f"{orange('│')}")
+  print(f"{orange('=' * 60)}\n")
+
+
+def format_plan_feedback(feedback: str, max_length: int = 200) -> str:
+  """Format plan feedback for display"""
+  if len(feedback) <= max_length:
+    return feedback
+  return feedback[:max_length] + '...'
