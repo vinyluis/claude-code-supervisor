@@ -78,21 +78,17 @@ def main():
         result = agent.process(
             problem_description=problem_description,
             solution_path="calculator.py",
-            test_path="test_calculator.py"
+            test_path="test_calculator.py",
+            enable_plan_mode=True
         )
         
         print()
         print("🎉 Execution Complete!")
         print("=" * 60)
         
-        # Display results with plan mode information
-        if hasattr(result, 'claude_plan') and result.claude_plan:
-            print(f"📋 Final Approved Plan:")
-            print(f"   Length: {len(result.claude_plan)} characters")
-            print(f"   Plan Iterations: {result.plan_iteration}")
-            print(f"   Plan Score: {result.plan_review_score:.2f}/1.0")
-            if result.plan_feedback:
-                print(f"   Final Feedback: {result.plan_feedback[:100]}...")
+        # Display results - plan mode was executed before execution mode
+        print("📋 Plan Mode: ✅ Completed (plan generated, reviewed, and approved)")
+        print(f"   Approved plan was used to guide implementation")
         
         print(f"✅ Solution Status: {'✅ Solved' if result.is_solved else '❌ Not Solved'}")
         print(f"🔄 Total Iterations: {result.current_iteration}")

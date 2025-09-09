@@ -97,9 +97,11 @@ class TestFeedbackSupervisorAgent:
     assert isinstance(agent, BaseSupervisorAgent)
     assert isinstance(agent, FeedbackSupervisorAgent)
 
-    # Should have a graph for feedback workflow
-    assert hasattr(agent, 'graph')
-    assert agent.graph is not None
+    # Should have separate graphs for plan and execution
+    assert hasattr(agent, 'plan_graph')
+    assert hasattr(agent, 'execution_graph')
+    assert agent.plan_graph is not None
+    assert agent.execution_graph is not None
 
   def test_feedback_supervisor_agent_workflow_methods(self) -> None:
     """Test that FeedbackSupervisorAgent has feedback-specific methods"""
@@ -126,7 +128,7 @@ class TestFeedbackSupervisorAgent:
 
     config = development_config()
     agent = FeedbackSupervisorAgent(config=config)
-    agent.graph = mock_graph_instance
+    agent.execution_graph = mock_graph_instance
 
     result = agent.process("Create a hello function", solution_path="test.py", test_path="test_test.py")
 
@@ -147,9 +149,11 @@ class TestSingleShotSupervisorAgent:
     assert isinstance(agent, BaseSupervisorAgent)
     assert isinstance(agent, SingleShotSupervisorAgent)
 
-    # Should have a graph for single-shot workflow
-    assert hasattr(agent, 'graph')
-    assert agent.graph is not None
+    # Should have separate graphs for plan and execution
+    assert hasattr(agent, 'plan_graph')
+    assert hasattr(agent, 'execution_graph')
+    assert agent.plan_graph is not None
+    assert agent.execution_graph is not None
 
   def test_singleshot_supervisor_agent_workflow_methods(self) -> None:
     """Test that SingleShotSupervisorAgent uses simplified workflow with base class methods"""
@@ -158,7 +162,8 @@ class TestSingleShotSupervisorAgent:
 
     # Should have base class methods (not single-shot specific ones)
     assert hasattr(agent, 'finalize_solution')
-    assert hasattr(agent, 'build_graph')
+    assert hasattr(agent, 'build_plan_graph')
+    assert hasattr(agent, 'build_execution_graph')
     assert hasattr(agent, 'process')
 
     # Should NOT have single-shot specific methods (simplified architecture)
@@ -169,7 +174,7 @@ class TestSingleShotSupervisorAgent:
 
     # Should have overridden finalize_solution method for single-shot behavior
     assert agent.finalize_solution.__qualname__ == 'SingleShotSupervisorAgent.finalize_solution'
-    
+
     # Should have single-shot specific test_solution method
     assert hasattr(agent, 'test_solution')
     assert agent.test_solution.__qualname__ == 'SingleShotSupervisorAgent.test_solution'
@@ -187,7 +192,7 @@ class TestSingleShotSupervisorAgent:
 
     config = development_config()
     agent = SingleShotSupervisorAgent(config=config)
-    agent.graph = mock_graph_instance
+    agent.execution_graph = mock_graph_instance
 
     result = agent.process("Create a hello function", solution_path="test.py", test_path="test_test.py")
 

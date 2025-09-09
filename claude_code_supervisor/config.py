@@ -66,7 +66,6 @@ class ClaudeCodeConfig:
     max_turns: Maximum turns per Claude Code session (default: None = unlimited)
     max_thinking_tokens: Maximum thinking tokens for Claude Code (default: 8000)
     tools: List of tools available to Claude Code (default: all tools)
-    enable_plan_mode: Enable plan mode functionality with plan generation and review (default: False)
     max_plan_iterations: Maximum plan review cycles before auto-approval (default: 3)
     plan_review_enabled: Enable LLM-powered plan review and refinement (default: True)
     plan_auto_approval_threshold: LLM confidence score threshold for auto-approval (default: 0.8)
@@ -79,7 +78,6 @@ class ClaudeCodeConfig:
   max_turns: int | None = None
   max_thinking_tokens: int = 8000
   tools: list[str] = field(default_factory=lambda: ToolsEnum.all())
-  enable_plan_mode: bool = False
   max_plan_iterations: int = 3
   plan_review_enabled: bool = True
   plan_auto_approval_threshold: float = 0.8
@@ -246,7 +244,6 @@ def plan_mode_config(
   """
   return SupervisorConfig(
     claude_code=ClaudeCodeConfig(
-      enable_plan_mode=True,
       max_plan_iterations=max_plan_iterations,
       plan_review_enabled=plan_review_enabled,
       plan_auto_approval_threshold=plan_auto_approval_threshold
@@ -284,7 +281,6 @@ def plan_mode_development_config(
       test_timeout=60,
     ),
     claude_code=ClaudeCodeConfig(
-      enable_plan_mode=True,
       max_plan_iterations=max_plan_iterations,
       plan_review_enabled=True,
       plan_auto_approval_threshold=plan_auto_approval_threshold

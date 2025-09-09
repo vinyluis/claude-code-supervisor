@@ -7,8 +7,12 @@ to enhance the supervisor's output and functionality.
 
 from enum import Enum
 from datetime import datetime
+from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+  from .supervisor import WorkflowState
 
 DataTypes = str | list | dict | tuple | np.ndarray | pd.DataFrame | pd.Series
 
@@ -617,3 +621,27 @@ def format_plan_feedback(feedback: str, max_length: int = 200) -> str:
   if len(feedback) <= max_length:
     return feedback
   return feedback[:max_length] + '...'
+
+
+def is_quota_error(text: str) -> bool:
+  """Check if text contains quota/credit error indicators"""
+  error_patterns = [
+    'credit balance is too low',
+    'quota exceeded',
+    'rate limit',
+    'insufficient credits',
+    'api credit',
+    'usage limit',
+    'billing'
+  ]
+  text_lower = text.lower()
+  return any(pattern in text_lower for pattern in error_patterns)
+
+
+def node_encountered_quota_error(state: 'WorkflowState') -> bool:
+  """Multi-method error detection for robustness"""
+  return bool(
+    state.should_terminate_early  # Async process set this flag
+    or any(is_quota_error(log) for log in state.claude_log[-3:])  # Recent logs
+    or (state.error_message and 'quota exceeded' in state.error_message.lower())  # Error message
+  )
