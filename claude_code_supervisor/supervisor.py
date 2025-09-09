@@ -640,7 +640,7 @@ class BaseSupervisorAgent(ABC):
       state.plan_risks = review_data.get('risk_assessment', [])
 
       # Display detailed review results
-      self._display_plan_review_results(state, review_data)
+      self._display_plan_review_results(state)
 
       # Auto-approve logic
       if (state.should_auto_approve_plan(config.plan_auto_approval_threshold)
