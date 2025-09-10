@@ -35,12 +35,15 @@ Usage:
 
 import os
 import sys
+import anyio
+import json
 import subprocess
 import dataclasses
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from enum import StrEnum
 from langchain_core.language_models.base import BaseLanguageModel
 
 from langgraph.graph import StateGraph, START, END
@@ -85,26 +88,88 @@ class AsyncioErrorFilter:
     """
 
     def __init__(self, original_stderr):
-        self.original_stderr = original_stderr
-        self.buffer = []
+      self.original_stderr = original_stderr
+      self.buffer = []
 
     def write(self, text):
-        if ("Task exception was never retrieved" in text
-            or "cancel scope in a different task" in text
-            or "RuntimeError: Attempted to exit cancel scope" in text):
-            return  # Suppress these specific errors
-        self.original_stderr.write(text)
+      if ("Task exception was never retrieved" in text
+          or "cancel scope in a different task" in text
+          or "RuntimeError: Attempted to exit cancel scope" in text):
+        return  # Suppress these specific errors
+      self.original_stderr.write(text)
 
     def flush(self):
-        self.original_stderr.flush()
+      self.original_stderr.flush()
 
     def __getattr__(self, name):
-        return getattr(self.original_stderr, name)
+      return getattr(self.original_stderr, name)
 
 
 # Install the filter at module import time
 _original_stderr = sys.stderr
 sys.stderr = AsyncioErrorFilter(_original_stderr)
+
+
+class PlanModeNodes(StrEnum):
+  """Plan mode specific node names to avoid string literals"""
+  GENERATE_PLAN = 'generate_plan'
+  REVIEW_PLAN = 'review_plan'
+  REFINE_PLAN = 'refine_plan'
+  APPROVE_PLAN = 'approve_plan'
+
+
+class ExecutionModeNodes(StrEnum):
+  """Execution mode specific node names to avoid string literals"""
+  INITIATE_CLAUDE = 'initiate_claude'
+  EXECUTE_CLAUDE = 'execute_claude'
+  REVIEW_SESSION = 'review_session'
+  TEST_AND_ANALYZE = 'test_and_analyze'
+  TEST_SOLUTION = 'test_solution'
+  GENERATE_GUIDANCE = 'generate_guidance'
+  REDUCE_MESSAGE = 'reduce_message'
+  FINALIZE = 'finalize'
+
+
+@dataclass
+class PlanState:
+  """State management for Plan Mode Subgraph operations"""
+  # Plan generation and content
+  plan_content: str = ""
+  plan_iteration: int = 0
+  plan_history: list[str] = field(default_factory=list)
+
+  # Plan review and scoring
+  plan_approved: bool = False
+  plan_review_score: float = 0.0
+  plan_feedback: str = ""
+  plan_strengths: list[str] = field(default_factory=list)
+  plan_improvements: list[str] = field(default_factory=list)
+  plan_risks: list[str] = field(default_factory=list)
+
+  # Claude session management
+  claude_session_id: str | None = None
+  claude_log: list[str] = field(default_factory=list)
+  claude_todos: list[dict] = field(default_factory=list)
+  messages: list[str] = field(default_factory=list)
+
+  # Error handling
+  error_message: str = ""
+  should_terminate_early: bool = False
+
+  def should_auto_approve_plan(self, threshold: float = 0.8) -> bool:
+    """OCR-inspired decision method for plan auto-approval"""
+    return (self.plan_iteration >= 3
+            or self.plan_review_score >= threshold)
+
+  def should_retry_plan(self, max_iterations: int = 3) -> bool:
+    """OCR-inspired retry logic for plan refinement"""
+    return (self.plan_iteration < max_iterations
+            and not self.plan_approved
+            and self.plan_review_score < 0.8)
+
+  def should_end_for_max_plan_iterations(self, max_iterations: int = 3) -> bool:
+    """Check if we've reached max plan iterations and should proceed"""
+    return self.plan_iteration >= max_iterations
 
 
 @dataclass
@@ -123,6 +188,7 @@ class WorkflowState:
       test_results: Output from running tests
       messages: List of messages sent to Claude Code
       validation_feedback: Detailed feedback from validation phase
+      approved_plan: Approved plan from plan mode (if any)
 
     Claude Session State:
       claude_session_id: Unique ID of the current Claude Code session
@@ -138,6 +204,7 @@ class WorkflowState:
   test_results: str = ""
   messages: list["str"] = field(default_factory=list)
   validation_feedback: str = ""
+  approved_plan: str | None = None
 
   # Claude session state
   claude_session_id: str | None = None
@@ -217,6 +284,7 @@ class BaseSupervisorAgent(ABC):
     self.integrate_into_codebase: bool = False
     self.development_guidelines: str = prompts.development_guidelines()
     self.instruction_prompt: str = prompts.instruction_prompt()
+    self.plan_mode_instruction_prompt: str = prompts.plan_mode_instruction_prompt()
     self.test_instructions: str = prompts.test_instructions(self.solution_path)
 
     # Check for credentials on the kwargs
@@ -242,10 +310,12 @@ class BaseSupervisorAgent(ABC):
       self.llm = self.initialize_llm()
 
     self.append_system_prompt = append_system_prompt
+    self.enable_plan_mode = False
     self.initialize_claude_code()
 
-    # Build the workflow graph using the subclass implementation
-    self.graph = self.build_graph()
+    # Build both graphs using the subclass implementations
+    self.plan_graph = self.build_plan_graph()
+    self.execution_graph = self.build_execution_graph()
 
   def load_environment(self) -> None:
     """
@@ -336,7 +406,7 @@ class BaseSupervisorAgent(ABC):
     utils.print_with_timestamp("\n🚀 Setting up Claude Code session...")
     utils.print_with_timestamp(f"Working directory: {os.getcwd()}")
 
-    # Build the initial prompt and store on the message buffer
+    # Build the initial prompt with approved plan if available
     claude_instructions = prompts.build_claude_instructions(
       instruction_prompt=self.instruction_prompt,
       problem_description=self.problem_description,
@@ -346,12 +416,13 @@ class BaseSupervisorAgent(ABC):
       test_path=self.test_path,
       input_data=self.input_data,
       output_data=self.output_data,
+      approved_plan=state.approved_plan,
     )
     state.messages = [claude_instructions]
     return state
 
   async def _claude_run(self, claude_instructions: str, options: ClaudeCodeOptions,
-                        state: WorkflowState) -> None:
+                        state: PlanState | WorkflowState) -> None:
     """Run claude code session asynchronously and retrieve the messages"""
     try:
       # Simple async iteration as recommended in SDK docs
@@ -361,7 +432,18 @@ class BaseSupervisorAgent(ABC):
           for block in message.content:
             if isinstance(block, TextBlock):
               state.claude_log.append(block.text)
-              utils.print_claude(block.text[:200] + ('...' if len(block.text) > 200 else ''))
+
+              # Distinguish plan mode messages in logs
+              if options.permission_mode == 'plan':
+                utils.print_claude(f"📋 Plan: {block.text[:200] + ('...' if len(block.text) > 200 else '')}")
+              else:
+                utils.print_claude(block.text[:200] + ('...' if len(block.text) > 200 else ''))
+
+              # Pure async execution - just flag potential issues for node to handle
+              if utils.is_quota_error(block.text):
+                state.should_terminate_early = True
+                state.error_message = f"API Credit/Quota Error - Early Termination: {block.text}"
+                return  # Exit cleanly, letting node handle workflow decisions
 
             elif isinstance(block, ToolUseBlock):
               tool_info = utils.get_tool_info(block.name, block.input)
@@ -375,6 +457,18 @@ class BaseSupervisorAgent(ABC):
                 for todo in todos:
                   status_emoji = {'pending': '⏳', 'in_progress': '🔄', 'completed': '✅'}.get(todo.get('status'), '❓')
                   utils.print_with_timestamp(f"  {status_emoji} {utils.blue(todo.get('content', 'Unknown task'))}")
+
+              # Capture plan content from ExitPlanMode tool calls
+              elif block.name == 'ExitPlanMode' and options.permission_mode == 'plan':
+                plan_content = block.input.get('plan', '')
+                if plan_content:
+                  # Store plan content directly in PlanState if available, otherwise use temp attribute
+                  if isinstance(state, PlanState):
+                    state.plan_content = plan_content
+                  else:
+                    setattr(state, 'claude_plan', plan_content)
+                  utils.print_with_timestamp("📋 Plan captured from ExitPlanMode")
+                  utils.print_plan_content(plan_content)
 
             elif isinstance(block, ToolResultBlock):
               if block.is_error:
@@ -404,45 +498,341 @@ class BaseSupervisorAgent(ABC):
       raise
 
   def execute_claude_session(self, state: WorkflowState) -> WorkflowState:
-    """Execute a Claude Code session until completion or timeout"""
-    # Activate session at the start of actual execution
-    state.claude_session_active = True
-
-    utils.print_with_timestamp(f"\n🚀 Executing Claude Code session (iteration {state.current_iteration})...")
-
-    # Get the prompt from the log
-    claude_instructions = state.messages[-1]
-    state.claude_log.append(f"PROMPT_ITERATION_{state.current_iteration}: {claude_instructions}")
-    utils.print_with_timestamp(f"📝 Using prompt for iteration {state.current_iteration}:")
-    utils.print_prompt(claude_instructions)
-
-    # Prepare Claude Code options for this session
-    options = ClaudeCodeOptions(
-      cwd=self.base_claude_options.cwd,
-      permission_mode=self.base_claude_options.permission_mode,
-      max_turns=self.base_claude_options.max_turns,
-      append_system_prompt=self.base_claude_options.append_system_prompt,
-      max_thinking_tokens=self.base_claude_options.max_thinking_tokens,
-      allowed_tools=self.base_claude_options.allowed_tools,
-      continue_conversation=state.current_iteration > 0,
-      resume=state.claude_session_id if state.claude_session_id else None
-    )
-
-    # Execute Claude Code session - simplified approach
+    """Execute a Claude Code session - fully self-contained with complete error handling"""
     try:
-      import anyio
+      # Activate session at the start of actual execution
+      state.claude_session_active = True
+
+      utils.print_with_timestamp(f"\n🚀 Executing Claude Code session (iteration {state.current_iteration})...")
+
+      # Get the prompt from the log
+      claude_instructions = state.messages[-1]
+      state.claude_log.append(f"PROMPT_ITERATION_{state.current_iteration}: {claude_instructions}")
+      utils.print_with_timestamp(f"📝 Using prompt for iteration {state.current_iteration}:")
+      utils.print_prompt(claude_instructions)
+
+      # Prepare Claude Code options for this session
+      options = ClaudeCodeOptions(
+        cwd=self.base_claude_options.cwd,
+        permission_mode=self.base_claude_options.permission_mode,
+        max_turns=self.base_claude_options.max_turns,
+        append_system_prompt=self.base_claude_options.append_system_prompt,
+        max_thinking_tokens=self.base_claude_options.max_thinking_tokens,
+        allowed_tools=self.base_claude_options.allowed_tools,
+        continue_conversation=state.current_iteration > 0,
+        resume=state.claude_session_id if state.claude_session_id else None
+      )
+
+      # Execute async operation within this node's boundary
       anyio.run(self._claude_run, claude_instructions, options, state)
+
+      # Node processes its own results completely - check for quota errors
+      if utils.node_encountered_quota_error(state):
+        state.should_terminate_early = True
+        utils.print_with_timestamp("🚫 Claude session terminated: quota exhausted")
+        return state  # Node completes with clear error state
+
+      utils.print_with_timestamp("✅ Claude session completed successfully")
+      return state  # Node completes with clear success state
+
     except Exception as e:
+      # Node handles its own exceptions completely
       error_msg = f"Error in async session execution: {e}"
       utils.print_error(error_msg)
       # Let the SDK handle its own errors - only store real errors
       if "cancel scope" not in str(e).lower() and "task exception" not in str(e).lower():
         state.error_message = error_msg
-        raise
+        state.should_terminate_early = True
+      return state  # Node completes with clear error state
 
-    # Mark session as inactive after completion
-    state.claude_session_active = False
-    return state
+    finally:
+      # Always mark session as inactive after completion
+      state.claude_session_active = False
+
+  def build_plan_graph(self):
+    """Build the plan mode graph workflow"""
+    graph = StateGraph(PlanState)
+
+    # Plan mode nodes
+    graph.add_node(PlanModeNodes.GENERATE_PLAN, self._generate_plan_node)
+    graph.add_node(PlanModeNodes.REVIEW_PLAN, self._review_plan_node)
+    graph.add_node(PlanModeNodes.REFINE_PLAN, self._refine_plan_node)
+    graph.add_node(PlanModeNodes.APPROVE_PLAN, self._approve_plan_node)
+
+    # Plan workflow edges
+    graph.add_edge(START, PlanModeNodes.GENERATE_PLAN)
+    graph.add_conditional_edges(PlanModeNodes.GENERATE_PLAN, self._plan_generation_decision)
+    graph.add_conditional_edges(PlanModeNodes.REVIEW_PLAN, self._plan_review_decision)
+    graph.add_edge(PlanModeNodes.REFINE_PLAN, PlanModeNodes.GENERATE_PLAN)
+    graph.add_edge(PlanModeNodes.APPROVE_PLAN, END)
+
+    return graph.compile()
+
+  def _generate_plan_node(self, state: PlanState) -> PlanState:
+    """Generate execution plan using Claude Code in plan mode"""
+    try:
+      utils.print_with_timestamp("📋 Generating execution plan...")
+
+      # Build plan mode prompt
+      claude_instructions = prompts.build_claude_instructions(
+        instruction_prompt=self.plan_mode_instruction_prompt,
+        problem_description=self.problem_description,
+        development_guidelines=self.development_guidelines,
+        test_instructions=self.test_instructions,
+        solution_path=self.solution_path,
+        test_path=self.test_path,
+        input_data=self.input_data,
+        output_data=self.output_data,
+      )
+      state.messages = [claude_instructions]
+
+      # Execute Claude in plan mode
+      self._execute_claude_plan_mode(state, claude_instructions)
+
+      # Check for errors
+      if self._plan_node_encountered_error(state):
+        state.should_terminate_early = True
+        utils.print_with_timestamp("🚫 Plan generation terminated due to error")
+        return state
+
+      # Extract and store plan
+      if state.plan_content:
+        state.plan_iteration += 1
+        state.plan_history.append(state.plan_content)
+        utils.print_with_timestamp(f"✅ Plan generated successfully (iteration {state.plan_iteration})")
+        utils.print_plan_content(state.plan_content)
+      else:
+        state.error_message = "No plan content captured from Claude"
+        state.should_terminate_early = True
+      return state
+
+    except Exception as e:
+      state.error_message = f"Plan generation failed: {e}"
+      state.should_terminate_early = True
+      utils.print_error(f"Plan generation error: {e}")
+      return state
+
+  def _review_plan_node(self, state: PlanState) -> PlanState:
+    """LLM-powered plan analysis and scoring"""
+    try:
+      utils.print_with_timestamp("🔍 Reviewing execution plan with supervisor LLM...")
+
+      # Skip review if disabled or auto-approve conditions met
+      config = self.config.claude_code
+      if (not config.plan_review_enabled
+          or state.should_auto_approve_plan(config.plan_auto_approval_threshold)):
+        state.plan_approved = True
+        state.plan_review_score = 1.0
+        state.plan_feedback = "Auto-approved (review disabled or high confidence)"
+        utils.print_with_timestamp("✅ Plan auto-approved")
+        return state
+
+      # Generate and execute review
+      review_prompt = self._get_plan_review_prompt(state)
+      review_result = self._call_llm("plan_review", review_prompt)
+
+      # Parse review results
+      review_data = self._parse_plan_review_result(review_result)
+      state.plan_review_score = review_data.get('overall_score', 0.0)
+      state.plan_feedback = review_data.get('feedback_summary', '')
+      state.plan_strengths = review_data.get('strengths', [])
+      state.plan_improvements = review_data.get('specific_improvements', [])
+      state.plan_risks = review_data.get('risk_assessment', [])
+
+      # Display detailed review results
+      self._display_plan_review_results(state)
+
+      # Auto-approve logic
+      if (state.should_auto_approve_plan(config.plan_auto_approval_threshold)
+          or state.should_end_for_max_plan_iterations(config.max_plan_iterations)):
+        state.plan_approved = True
+        if state.should_end_for_max_plan_iterations(config.max_plan_iterations):
+          state.plan_feedback = f"Auto-approved after {config.max_plan_iterations} iterations"
+      else:
+        state.plan_approved = review_data.get('recommendation') == 'approve'
+
+      return state
+
+    except Exception as e:
+      # Fallback to auto-approval on review failure
+      utils.print_error(f"Plan review failed, auto-approving: {e}")
+      state.plan_approved = True
+      state.plan_review_score = 1.0
+      state.error_message = f"Plan review failed, auto-approving: {e}"
+      return state
+
+  def _refine_plan_node(self, state: PlanState) -> PlanState:
+    """Generate plan refinement guidance"""
+    try:
+      utils.print_with_timestamp("🔄 Refining execution plan based on feedback...")
+
+      # Generate refinement guidance
+      refinement_prompt = self._get_plan_refinement_prompt(state)
+      claude_instructions = prompts.build_claude_guidance_prompt(refinement_prompt)
+      state.messages.append(claude_instructions)
+
+      # Clear error state for retry
+      state.error_message = ""
+
+      utils.print_with_timestamp(f"📝 Refinement guidance provided for iteration {state.plan_iteration}")
+      return state
+
+    except Exception as e:
+      utils.print_error(f"Plan refinement failed: {e}")
+      state.error_message = f"Plan refinement failed: {e}"
+      return state
+
+  def _approve_plan_node(self, state: PlanState) -> PlanState:
+    """Final plan approval and preparation for execution"""
+    try:
+      utils.print_with_timestamp("✅ Plan approved for execution!")
+
+      # Display final approved plan
+      utils.print_plan_approved(state.plan_content)
+
+      # Set approval status
+      state.plan_approved = True
+
+      utils.print_with_timestamp("🚀 Plan ready for implementation phase...")
+      return state
+
+    except Exception as e:
+      utils.print_error(f"Plan approval failed: {e}")
+      state.error_message = f"Plan approval failed: {e}"
+      return state
+
+  def _plan_generation_decision(self, state: PlanState) -> Literal[PlanModeNodes.REVIEW_PLAN, '__end__']:
+    """Route after plan generation"""
+    if state.should_terminate_early:
+      utils.print_with_timestamp("🚫 Terminating due to error")
+      return END
+    utils.print_with_timestamp("✅ Routing to plan review")
+    return PlanModeNodes.REVIEW_PLAN
+
+  def _plan_review_decision(self, state: PlanState) -> Literal[PlanModeNodes.REFINE_PLAN, PlanModeNodes.APPROVE_PLAN, '__end__']:
+    """Route after plan review"""
+    if state.should_terminate_early:
+      utils.print_with_timestamp("🚫 Terminating due to error")
+      return END
+
+    config = self.config.claude_code
+    if (state.plan_approved
+        or not state.should_retry_plan(config.max_plan_iterations)):
+      utils.print_with_timestamp("✅ Routing to approve plan")
+      return PlanModeNodes.APPROVE_PLAN
+
+    utils.print_with_timestamp("🔄 Routing to refine plan")
+    return PlanModeNodes.REFINE_PLAN
+
+  # Plan mode helper methods
+  def _execute_claude_plan_mode(self, state: PlanState, instructions: str) -> None:
+    """Execute Claude Code in plan mode and capture plan content"""
+    # Create plan-specific options
+    options = ClaudeCodeOptions(
+      cwd=self.base_claude_options.cwd,
+      permission_mode='plan',
+      max_turns=self.base_claude_options.max_turns,
+      append_system_prompt=self.base_claude_options.append_system_prompt,
+      max_thinking_tokens=self.base_claude_options.max_thinking_tokens,
+      allowed_tools=self.base_claude_options.allowed_tools,
+    )
+    anyio.run(self._claude_run, instructions, options, state)
+
+  def _plan_node_encountered_error(self, state: PlanState) -> bool:
+    """Check if plan node encountered errors"""
+    return bool(
+      state.should_terminate_early
+      or (state.error_message and any(error in state.error_message.lower()
+                                  for error in ['credit balance', 'quota exceeded', 'rate limit']))
+    )
+
+  def _get_plan_review_prompt(self, state: PlanState) -> str:
+    """Generate plan review prompt"""
+    template = prompts.plan_review_template()
+    return template.format(
+      problem_description=self.problem_description,
+      input_data=str(self.input_data) if self.input_data is not None else "None provided",
+      output_data=str(self.output_data) if self.output_data is not None else "None provided",
+      development_context=self.development_guidelines,
+      claude_plan=state.plan_content
+    )
+
+  def _get_plan_refinement_prompt(self, state: PlanState) -> str:
+    """Generate plan refinement prompt"""
+    template = prompts.plan_refinement_guidance_template()
+    return template.format(
+      problem_description=self.problem_description,
+      plan_iteration=state.plan_iteration,
+      plan_review_score=state.plan_review_score,
+      plan_feedback=state.plan_feedback,
+      previous_plan=state.plan_content
+    )
+
+  def _parse_plan_review_result(self, review_result: str) -> dict:
+    """Parse structured JSON response from plan review"""
+    try:
+      # Try to extract JSON from the response
+      start_idx = review_result.find('{')
+      end_idx = review_result.rfind('}') + 1
+      if start_idx != -1 and end_idx > start_idx:
+        json_str = review_result[start_idx:end_idx]
+        return json.loads(json_str)
+    except (json.JSONDecodeError, ValueError):
+      pass
+
+    # Fallback parsing for non-JSON responses
+    return {
+      'overall_score': 0.5,
+      'strengths': ["Plan structure provided"],
+      'specific_improvements': ["Review response was not in expected JSON format"],
+      'risk_assessment': ["Unable to properly parse review results"],
+      'recommendation': 'refine',
+      'feedback_summary': review_result[:200] + ('...' if len(review_result) > 200 else '')
+    }
+
+  def _display_plan_review_results(self, state: PlanState) -> None:
+    """Display comprehensive plan review results"""
+    score = state.plan_review_score
+    status = "✅ Approved" if state.plan_approved else ("🔄 Needs Refinement" if score < 0.8 else "⚠️ Conditional")
+
+    print(f"\n{utils.orange('=' * 60)}")
+    print(f"{utils.orange('📋 PLAN REVIEW RESULTS')} (Iteration {state.plan_iteration})")
+    print(f"{utils.orange('=' * 60)}")
+
+    # Score and status
+    score_color = utils.green if score >= 0.8 else utils.yellow if score >= 0.6 else utils.red
+    print(f"   📊 Score: {score_color(f'{score:.2f}/1.0')}")
+    print(f"   📋 Status: {status}")
+    print()
+
+    # Strengths
+    if state.plan_strengths:
+      print(f"   ✅ {utils.green('Strengths:')}")
+      for strength in state.plan_strengths:
+        print(f"      • {strength}")
+      print()
+
+    # Improvements needed
+    if state.plan_improvements:
+      print(f"   ⚠️  {utils.yellow('Areas for Improvement:')}")
+      for improvement in state.plan_improvements:
+        print(f"      • {improvement}")
+      print()
+
+    # Risk assessment
+    if state.plan_risks:
+      print(f"   🔍 {utils.red('Risk Assessment:')}")
+      for risk in state.plan_risks:
+        print(f"      • {risk}")
+      print()
+
+    # Feedback summary
+    if state.plan_feedback:
+      print(f"   💬 {utils.cyan('Feedback Summary:')}")
+      print(f"      {state.plan_feedback}")
+      print()
+
+    print(f"{utils.orange('=' * 60)}\n")
 
   def review_session(self, state: WorkflowState) -> WorkflowState:
     """Review and analyze the results from Claude's session"""
@@ -516,7 +906,8 @@ class BaseSupervisorAgent(ABC):
         return 'validate'
     else:
       # Standard mode: check if both files exist
-      if os.path.exists(self.solution_path) and os.path.exists(self.test_path):
+      if (self.solution_path and os.path.exists(self.solution_path)
+          and self.test_path and os.path.exists(self.test_path)):
         utils.print_success("Both solution and test files exist, validating")
         return 'validate'
 
@@ -715,7 +1106,7 @@ class BaseSupervisorAgent(ABC):
     if state.claude_todos:
       completed = sum(1 for todo in state.claude_todos if todo.get('status') == 'completed')
       total = len(state.claude_todos)
-      summary_parts.append(f"✅ Todo completion: {completed}/{total} ({completed/total*100:.1f}%)")
+      summary_parts.append(f"✅ Todo completion: {completed}/{total} ({completed / total * 100:.1f}%)")
 
     # Claude's own assessment
     summary_parts.append("✅ Claude reported successful implementation")
@@ -776,8 +1167,7 @@ class BaseSupervisorAgent(ABC):
     mentioned_items = self._extract_mentioned_items(recent_output)
 
     # Use LLM to analyze and determine strategy
-    from .prompts import test_analysis_template
-    analysis_prompt = test_analysis_template().format(
+    analysis_prompt = prompts.test_analysis_template().format(
       claude_output=recent_output,
       mentioned_items=mentioned_items,
       test_instructions=self.test_instructions,
@@ -1111,11 +1501,9 @@ Please update your todo list and continue working on the solution, addressing th
 
   def _generate_error_guidance(self, state: WorkflowState) -> str:
     """Generate guidance for error cases using LLM"""
-    from .prompts import error_guidance_template
-
     example_output_section = f'Expected behavior: {self.example_output}' if self.example_output else ''
 
-    analysis_prompt = error_guidance_template().format(
+    analysis_prompt = prompts.error_guidance_template().format(
       problem_description=self.problem_description,
       example_output_section=example_output_section,
       error_message=state.error_message,
@@ -1130,14 +1518,12 @@ Please update your todo list and continue working on the solution, addressing th
 
   def _generate_feedback_guidance(self, state: WorkflowState) -> str:
     """Generate guidance for validation feedback using LLM"""
-    from .prompts import feedback_guidance_template
-
     example_output_section = f'Expected behavior: {self.example_output}' if self.example_output else ''
 
     # Get recent messages from Claude's log
     recent_messages = "\n".join(state.claude_log[-3:]) if state.claude_log else "No recent messages"
 
-    analysis_prompt = feedback_guidance_template().format(
+    analysis_prompt = prompts.feedback_guidance_template().format(
       problem_description=self.problem_description,
       example_output_section=example_output_section,
       validation_feedback=state.validation_feedback,
@@ -1230,6 +1616,8 @@ Please update your todo list and continue working on the solution, addressing th
       # First try to run a syntax check on both files
       for file_path, file_type in [(self.solution_path, 'solution'),
                                    (self.test_path, 'test')]:
+        if file_path is None:
+          continue
         try:
           with open(file_path, 'r') as f:
             compile(f.read(), file_path, 'exec')
@@ -1242,6 +1630,12 @@ Please update your todo list and continue working on the solution, addressing th
           return state
 
       # Run the tests
+      if self.test_path is None:
+        state.test_results = "No test file specified"
+        state.is_solved = False
+        state.validation_feedback = "No test file specified for validation"
+        return state
+
       result = subprocess.run(
         [sys.executable, '-m', 'pytest', self.test_path, '-v',
          '--tb=short', '--no-header'],
@@ -1324,9 +1718,9 @@ Please update your todo list and continue working on the solution, addressing th
 
       if not self.integrate_into_codebase:
         utils.print_with_timestamp("\n📁 Files generated (may contain partial solutions):")
-        if os.path.exists(self.solution_path):
+        if self.solution_path and os.path.exists(self.solution_path):
           utils.print_with_timestamp(f"  - {self.solution_path}")
-        if os.path.exists(self.test_path):
+        if self.test_path and os.path.exists(self.test_path):
           utils.print_with_timestamp(f"  - {self.test_path}")
 
     # No cleanup needed - all data operations are in-memory only
@@ -1334,17 +1728,14 @@ Please update your todo list and continue working on the solution, addressing th
     return state
 
   @abstractmethod
-  def build_graph(self):
+  def build_execution_graph(self):
     """
-    Build the LangGraph workflow for this supervisor type.
-
-    This method must be implemented by subclasses to define their specific
-    workflow graph structure (feedback loops vs single-shot).
+    Build the execution LangGraph workflow.
 
     Returns:
-        Compiled LangGraph workflow
+        Compiled LangGraph workflow for problem solving and iteration
     """
-    raise NotImplementedError("Subclasses must implement the build_graph method")
+    raise NotImplementedError("Subclasses must implement the build_execution_graph method")
 
   def _get_process_start_message(self, problem_description: str) -> str:
     """
@@ -1367,14 +1758,14 @@ Please update your todo list and continue working on the solution, addressing th
       output_data: Any = None,
       solution_path: str | None = None,
       test_path: str | None = None,
+      enable_plan_mode: bool = False,
       **kwargs: Any,
     ) -> WorkflowState:
     """
-    Main method to process a problem using the workflow graph.
+    Main method to process a problem using two independent graphs.
 
-    This method contains the common logic for both feedback and single-shot
-    supervisors. The specific workflow behavior is determined by the graph
-    built by the subclass's build_graph() method.
+    This method executes plan mode (if enabled) followed by execution mode.
+    Plan mode generates an approved plan, which is then passed to execution mode.
 
     Args:
       problem_description: Description of the problem to solve
@@ -1382,10 +1773,12 @@ Please update your todo list and continue working on the solution, addressing th
       output_data: Expected output for validation (optional)
       solution_path: Path to save solution file (optional, if None integrates into codebase)
       test_path: Path to save test file (optional, if None integrates into codebase)
+      enable_plan_mode: Enable plan mode for this specific request
 
     Kwargs:
       development_guidelines: Custom development guidelines for Claude Code
       instruction_prompt: Custom instruction prompt for Claude Code
+      plan_mode_instruction_prompt: Custom instruction prompt for Claude Code on plan mode
       test_instructions: Custom instructions for running tests
 
     Returns:
@@ -1402,26 +1795,55 @@ Please update your todo list and continue working on the solution, addressing th
     # Prompt overrides
     self.development_guidelines = kwargs.get('development_guidelines') or prompts.development_guidelines()
     self.instruction_prompt = kwargs.get('instruction_prompt') or prompts.instruction_prompt()
+    self.plan_mode_instruction_prompt = kwargs.get('plan_mode_instruction_prompt') or prompts.plan_mode_instruction_prompt()
     self.test_instructions = kwargs.get('test_instructions') or prompts.test_instructions(self.solution_path)
 
-    # Create simplified initial state
-    initial_state = WorkflowState()
+    # Create initial execution state
+    execution_state = WorkflowState()
 
     utils.print_with_timestamp(self._get_process_start_message(problem_description))
+
     try:
-      final_state = self.graph.invoke(initial_state)
+      # Step 1: Execute plan mode if enabled
+      if enable_plan_mode:
+        utils.print_with_timestamp("📋 Starting plan mode...")
+
+        plan_state = PlanState()
+        plan_result = self.plan_graph.invoke(plan_state)
+        if isinstance(plan_result, dict):
+          final_plan_state = PlanState(**plan_result)
+        else:
+          final_plan_state = plan_result
+
+        # Check for plan mode errors
+        if final_plan_state.should_terminate_early or final_plan_state.error_message:
+          execution_state.should_terminate_early = True
+          execution_state.error_message = final_plan_state.error_message or "Plan mode terminated early"
+          utils.print_with_timestamp("🚫 Plan mode terminated with error")
+          return execution_state
+
+        # Extract approved plan for execution
+        if final_plan_state.plan_approved and final_plan_state.plan_content:
+          execution_state.approved_plan = final_plan_state.plan_content
+          utils.print_with_timestamp("✅ Plan mode completed successfully!")
+          utils.print_with_timestamp(f"📋 Plan score: {final_plan_state.plan_review_score:.2f}/1.0")
+        else:
+          utils.print_with_timestamp("⚠️ Plan mode completed without approved plan")
+
+      # Step 2: Execute main workflow
+      utils.print_with_timestamp("🚀 Starting execution mode...")
+      final_state = self.execution_graph.invoke(execution_state)
 
       # Ensure we return a WorkflowState object
       if isinstance(final_state, dict):
-        # Convert dict back to WorkflowState if needed
         final_state = WorkflowState(**final_state)
 
       return final_state
 
     except Exception as e:
       utils.print_error(f"Error during execution: {e}")
-      initial_state.error_message = str(e)
-      return initial_state
+      execution_state.error_message = str(e)
+      return execution_state
 
 
 class FeedbackSupervisorAgent(BaseSupervisorAgent):
@@ -1479,42 +1901,44 @@ class FeedbackSupervisorAgent(BaseSupervisorAgent):
     """Get the log message for iterative problem solving start."""
     return f"🚀 Starting iterative problem solving: {problem_description}"
 
-  def build_graph(self):
-    """Build the LangGraph workflow with feedback loops"""
+  def build_execution_graph(self):
+    """Build the execution LangGraph workflow with feedback loops"""
     workflow = StateGraph(WorkflowState)
 
-    workflow.add_node("initiate_claude", self.initiate_claude_code_session)
-    workflow.add_node("execute_claude", self.execute_claude_session)
-    workflow.add_node("review_session", self.review_session)
-    workflow.add_node("test_and_analyze", self.test_and_analyze)
-    workflow.add_node("generate_guidance", self.generate_guidance)
-    workflow.add_node("reduce_message", self.reduce_message_and_retry)
-    workflow.add_node("finalize", self.finalize_solution)
+    # Core workflow nodes
+    workflow.add_node(ExecutionModeNodes.INITIATE_CLAUDE, self.initiate_claude_code_session)
+    workflow.add_node(ExecutionModeNodes.EXECUTE_CLAUDE, self.execute_claude_session)
+    workflow.add_node(ExecutionModeNodes.REVIEW_SESSION, self.review_session)
+    workflow.add_node(ExecutionModeNodes.TEST_AND_ANALYZE, self.test_and_analyze)
+    workflow.add_node(ExecutionModeNodes.GENERATE_GUIDANCE, self.generate_guidance)
+    workflow.add_node(ExecutionModeNodes.REDUCE_MESSAGE, self.reduce_message_and_retry)
+    workflow.add_node(ExecutionModeNodes.FINALIZE, self.finalize_solution)
 
-    workflow.add_edge(START, 'initiate_claude')
-    workflow.add_edge("initiate_claude", 'execute_claude')
-    workflow.add_edge("execute_claude", 'review_session')
+    # Execution workflow
+    workflow.add_edge(START, ExecutionModeNodes.INITIATE_CLAUDE)
+    workflow.add_edge(ExecutionModeNodes.INITIATE_CLAUDE, ExecutionModeNodes.EXECUTE_CLAUDE)
+    workflow.add_edge(ExecutionModeNodes.EXECUTE_CLAUDE, ExecutionModeNodes.REVIEW_SESSION)
     workflow.add_conditional_edges(
-      'review_session',
+      ExecutionModeNodes.REVIEW_SESSION,
       self.decide_next_action,
       {
-        'validate': 'test_and_analyze',
-        'guide': 'generate_guidance',
-        'reduce': 'reduce_message',
-        'finish': 'finalize'
+        'validate': ExecutionModeNodes.TEST_AND_ANALYZE,
+        'guide': ExecutionModeNodes.GENERATE_GUIDANCE,
+        'reduce': ExecutionModeNodes.REDUCE_MESSAGE,
+        'finish': ExecutionModeNodes.FINALIZE
       }
     )
     workflow.add_conditional_edges(
-      'test_and_analyze',
+      ExecutionModeNodes.TEST_AND_ANALYZE,
       self.should_iterate,
       {
-        'continue': 'generate_guidance',
-        'finish': 'finalize',
+        'continue': ExecutionModeNodes.GENERATE_GUIDANCE,
+        'finish': ExecutionModeNodes.FINALIZE,
       }
     )
-    workflow.add_edge("generate_guidance", 'execute_claude')
-    workflow.add_edge("reduce_message", 'execute_claude')
-    workflow.add_edge("finalize", END)
+    workflow.add_edge(ExecutionModeNodes.GENERATE_GUIDANCE, ExecutionModeNodes.EXECUTE_CLAUDE)
+    workflow.add_edge(ExecutionModeNodes.REDUCE_MESSAGE, ExecutionModeNodes.EXECUTE_CLAUDE)
+    workflow.add_edge(ExecutionModeNodes.FINALIZE, END)
 
     return workflow.compile()
 
@@ -1582,9 +2006,14 @@ class SingleShotSupervisorAgent(BaseSupervisorAgent):
     else:
       # Standard mode: check if both files exist first
       missing_files = []
-      if not os.path.exists(self.solution_path):
+      if self.solution_path is None:
+        missing_files.append("Solution file not specified")
+      elif not os.path.exists(self.solution_path):
         missing_files.append(f"Solution file {self.solution_path}")
-      if not os.path.exists(self.test_path):
+
+      if self.test_path is None:
+        missing_files.append("Test file not specified")
+      elif not os.path.exists(self.test_path):
         missing_files.append(f"Test file {self.test_path}")
 
       if missing_files:
@@ -1605,23 +2034,23 @@ class SingleShotSupervisorAgent(BaseSupervisorAgent):
 
     return state
 
-  def build_graph(self):
-    """Build the simplified LangGraph workflow without feedback loops"""
+  def build_execution_graph(self):
+    """Build the simplified execution LangGraph workflow"""
     workflow = StateGraph(WorkflowState)
 
-    workflow.add_node("initiate_claude", self.initiate_claude_code_session)
-    workflow.add_node("execute_claude", self.execute_claude_session)
-    workflow.add_node("review_session", self.review_session)
-    workflow.add_node("test_solution", self.test_solution)
-    workflow.add_node("finalize", self.finalize_solution)
+    workflow.add_node(ExecutionModeNodes.INITIATE_CLAUDE, self.initiate_claude_code_session)
+    workflow.add_node(ExecutionModeNodes.EXECUTE_CLAUDE, self.execute_claude_session)
+    workflow.add_node(ExecutionModeNodes.REVIEW_SESSION, self.review_session)
+    workflow.add_node(ExecutionModeNodes.TEST_SOLUTION, self.test_solution)
+    workflow.add_node(ExecutionModeNodes.FINALIZE, self.finalize_solution)
 
-    # Linear workflow: review session → test solution → finalize
-    workflow.add_edge(START, 'initiate_claude')
-    workflow.add_edge("initiate_claude", 'execute_claude')
-    workflow.add_edge("execute_claude", 'review_session')
-    workflow.add_edge("review_session", 'test_solution')
-    workflow.add_edge("test_solution", 'finalize')
-    workflow.add_edge("finalize", END)
+    # Linear workflow: initiate → execute → review → test → finalize
+    workflow.add_edge(START, ExecutionModeNodes.INITIATE_CLAUDE)
+    workflow.add_edge(ExecutionModeNodes.INITIATE_CLAUDE, ExecutionModeNodes.EXECUTE_CLAUDE)
+    workflow.add_edge(ExecutionModeNodes.EXECUTE_CLAUDE, ExecutionModeNodes.REVIEW_SESSION)
+    workflow.add_edge(ExecutionModeNodes.REVIEW_SESSION, ExecutionModeNodes.TEST_SOLUTION)
+    workflow.add_edge(ExecutionModeNodes.TEST_SOLUTION, ExecutionModeNodes.FINALIZE)
+    workflow.add_edge(ExecutionModeNodes.FINALIZE, END)
 
     return workflow.compile()
 

@@ -167,6 +167,7 @@ solution.py
 test_solution.py
 input_data_*.json
 *.log
+CLAUDE.md
 
 # Temporary files
 *.tmp

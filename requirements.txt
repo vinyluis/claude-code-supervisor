@@ -2,11 +2,11 @@ numpy==2.3.1
 pandas==2.3.0
 scikit-learn==1.7.0
 
-langchain==0.3.26
-langchain-aws==0.2.27
+langchain==0.3.27
+langchain-aws==0.2.31
 langchain-openai==0.3.26
-langgraph==0.4.10
+langgraph==0.6.6
 
-claude-code-sdk==0.0.14
+claude-code-sdk==0.0.21
 pytest>=6.0.0
 python-dotenv>=0.19.0

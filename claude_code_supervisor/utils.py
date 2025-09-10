@@ -7,8 +7,12 @@ to enhance the supervisor's output and functionality.
 
 from enum import Enum
 from datetime import datetime
+from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+  from .supervisor import WorkflowState
 
 DataTypes = str | list | dict | tuple | np.ndarray | pd.DataFrame | pd.Series
 
@@ -144,6 +148,11 @@ def cyan(text: str) -> str:
 def magenta(text: str) -> str:
   """Add magenta color to text for special messages"""
   return f"\033[95m{text}\033[0m"
+
+
+def orange(text: str) -> str:
+  """Add orange color to text for plan content"""
+  return f"\033[38;5;208m{text}\033[0m"
 
 
 def bold(text: str) -> str:
@@ -575,3 +584,64 @@ def reduce_message_length(message: str, reduction_factor: float = 0.7) -> str:
     reduced_message += '\n\n[NOTE: This message was automatically reduced to fit context limits. Focus on the core requirements above.]'
 
   return reduced_message
+
+
+# Plan Mode Utility Functions
+
+def print_plan_summary(plan_text: str):
+  """Print plan summary with formatting"""
+  print_with_timestamp(f"{cyan('Plan Summary:')} {plan_text}")
+
+def print_plan_approved(plan_text: str):
+  """Print approved plan with formatting"""
+  print(f"\n{green('🎉 APPROVED EXECUTION PLAN:')}\n")
+  print(f"{cyan(plan_text)}\n")
+
+def print_plan_review(score: float, status: str):
+  """Print plan review status"""
+  color_func = green if score >= 0.8 else yellow if score >= 0.6 else red
+  print_with_timestamp(f"📋 Plan Review: {color_func(f'{score:.2f}/1.0')} - {status}")
+
+
+def print_plan_content(plan_content: str):
+  """Print plan content with orange formatting for visibility"""
+  print(f"\n{orange('📋 EXECUTION PLAN:')}")
+  print(f"{orange('=' * 60)}")
+  # Split plan into lines and add orange prefix for better visibility
+  for line in plan_content.split('\n'):
+    if line.strip():
+      print(f"{orange('│')} {line}")
+    else:
+      print(f"{orange('│')}")
+  print(f"{orange('=' * 60)}\n")
+
+
+def format_plan_feedback(feedback: str, max_length: int = 200) -> str:
+  """Format plan feedback for display"""
+  if len(feedback) <= max_length:
+    return feedback
+  return feedback[:max_length] + '...'
+
+
+def is_quota_error(text: str) -> bool:
+  """Check if text contains quota/credit error indicators"""
+  error_patterns = [
+    'credit balance is too low',
+    'quota exceeded',
+    'rate limit',
+    'insufficient credits',
+    'api credit',
+    'usage limit',
+    'billing'
+  ]
+  text_lower = text.lower()
+  return any(pattern in text_lower for pattern in error_patterns)
+
+
+def node_encountered_quota_error(state: 'WorkflowState') -> bool:
+  """Multi-method error detection for robustness"""
+  return bool(
+    state.should_terminate_early  # Async process set this flag
+    or any(is_quota_error(log) for log in state.claude_log[-3:])  # Recent logs
+    or (state.error_message and 'quota exceeded' in state.error_message.lower())  # Error message
+  )

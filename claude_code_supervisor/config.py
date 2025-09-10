@@ -66,6 +66,9 @@ class ClaudeCodeConfig:
     max_turns: Maximum turns per Claude Code session (default: None = unlimited)
     max_thinking_tokens: Maximum thinking tokens for Claude Code (default: 8000)
     tools: List of tools available to Claude Code (default: all tools)
+    max_plan_iterations: Maximum plan review cycles before auto-approval (default: 3)
+    plan_review_enabled: Enable LLM-powered plan review and refinement (default: True)
+    plan_auto_approval_threshold: LLM confidence score threshold for auto-approval (default: 0.8)
   """
   use_bedrock: bool = False
   working_directory: str | None = None
@@ -75,6 +78,9 @@ class ClaudeCodeConfig:
   max_turns: int | None = None
   max_thinking_tokens: int = 8000
   tools: list[str] = field(default_factory=lambda: ToolsEnum.all())
+  max_plan_iterations: int = 3
+  plan_review_enabled: bool = True
+  plan_auto_approval_threshold: float = 0.8
 
 
 @dataclass
@@ -205,4 +211,78 @@ def production_config() -> SupervisorConfig:
       max_iterations=5,
       test_timeout=60,
     ),
+  )
+
+
+def plan_mode_config(
+  max_plan_iterations: int = 3,
+  plan_review_enabled: bool = True,
+  plan_auto_approval_threshold: float = 0.8
+) -> SupervisorConfig:
+  """
+  Create a configuration with plan mode enabled.
+
+  This configuration enables Claude Code's plan mode functionality with intelligent
+  LLM-powered plan review and iterative refinement.
+
+  Args:
+    max_plan_iterations: Maximum plan review cycles before auto-approval (default: 3)
+    plan_review_enabled: Enable LLM-powered plan review and refinement (default: True)
+    plan_auto_approval_threshold: LLM confidence score threshold for auto-approval (default: 0.8)
+
+  Returns:
+    SupervisorConfig with plan mode enabled and specified review settings
+
+  Example:
+    >>> # Thorough plan review
+    >>> config = plan_mode_config(max_plan_iterations=5, plan_auto_approval_threshold=0.9)
+    >>> agent = SupervisorAgent(config=config)
+    
+    >>> # Quick plan mode
+    >>> config = plan_mode_config(max_plan_iterations=1, plan_review_enabled=False)
+    >>> agent = SupervisorAgent(config=config)
+  """
+  return SupervisorConfig(
+    claude_code=ClaudeCodeConfig(
+      max_plan_iterations=max_plan_iterations,
+      plan_review_enabled=plan_review_enabled,
+      plan_auto_approval_threshold=plan_auto_approval_threshold
+    )
+  )
+
+
+def plan_mode_development_config(
+  max_plan_iterations: int = 5,
+  plan_auto_approval_threshold: float = 0.7
+) -> SupervisorConfig:
+  """
+  Create a plan mode configuration optimized for development.
+
+  Uses more permissive settings for exploration and learning, with more iterations
+  and lower approval threshold to encourage experimentation.
+
+  Args:
+    max_plan_iterations: Maximum plan review cycles (default: 5 for more exploration)
+    plan_auto_approval_threshold: Approval threshold (default: 0.7 for more permissive)
+
+  Returns:
+    SupervisorConfig optimized for development with plan mode enabled
+
+  Example:
+    >>> config = plan_mode_development_config()
+    >>> agent = SupervisorAgent(config=config)
+  """
+  return SupervisorConfig(
+    agent=AgentConfig(
+      model_name='gpt-4o-mini',
+      temperature=0.2,
+      provider='openai',
+      max_iterations=5,
+      test_timeout=60,
+    ),
+    claude_code=ClaudeCodeConfig(
+      max_plan_iterations=max_plan_iterations,
+      plan_review_enabled=True,
+      plan_auto_approval_threshold=plan_auto_approval_threshold
+    )
   )
