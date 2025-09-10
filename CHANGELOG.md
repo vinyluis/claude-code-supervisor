@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-01-14
+
+### Added
+- Plan mode parameter control with `enable_plan_mode=True` in `process()` method
+- Custom plan mode instruction prompt overrides (`plan_mode_instruction_prompt` parameter)
+- Dual graph architecture with independent `plan_graph` and `execution_graph` workflows
+- ExecutionModeNodes enum for centralized node name management
+- Quota error utility functions moved to `claude_code_supervisor.utils` module
+- Enhanced plan mode example that actually demonstrates plan mode functionality
+
+### Changed
+- Plan mode control moved from configuration-only to `process()` parameter for better flexibility
+- `_claude_run` method signature now accepts `PlanState | WorkflowState` directly
+- Eliminated unnecessary PlanState ↔ WorkflowState conversions for improved performance (-21 lines)
+- Enhanced documentation in README.md and supervisor.py docstring with new architecture details
+- Improved code organization with quota error detection functions in utils module
+
+### Fixed
+- Method signature error in `_display_plan_review_results()` causing plan review failures
+- Plan mode example not actually enabling plan mode (`enable_plan_mode=True` was missing)
+- State conversion performance bottlenecks in `_execute_claude_plan_mode`
+- Missing `claude_todos` field in PlanState for consistent interface
+
+### Architecture
+- Consolidated plan mode functionality into supervisor internal methods for cleaner architecture
+- Removed dynamic graph rebuilding in favor of static dual graph approach
+- Better separation of concerns between planning and execution workflows
+
 ## [0.2.2] - 2025-07-25
 
 ### Changed
