@@ -33,7 +33,7 @@ dependencies = [
     "langchain-aws>=0.2.0",
     "langchain-openai>=0.3.0",
     "langgraph>=0.6.0",
-    "claude-code-sdk>=0.0.21",
+    "claude-agent-sdk>=0.1.0",
     "pytest>=6.0.0",
     "python-dotenv>=0.19.0",
 ]
@@ -156,6 +156,6 @@ strict_equality = true
 module = [
     "langchain.*",
     "langgraph.*",
-    "claude_code_sdk.*",
+    "claude_agent_sdk.*",
 ]
 ignore_missing_imports = true

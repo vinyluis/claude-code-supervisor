@@ -50,8 +50,8 @@ from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from langchain_aws import ChatBedrockConverse
-from claude_code_sdk import query, ClaudeCodeOptions
-from claude_code_sdk.types import (
+from claude_agent_sdk import query, ClaudeAgentOptions
+from claude_agent_sdk.types import (
   AssistantMessage, TextBlock, ToolUseBlock, ToolResultBlock, ResultMessage,
   SystemMessage
 )
@@ -249,7 +249,7 @@ class BaseSupervisorAgent(ABC):
   Attributes:
     config: Configuration for the supervisor agent (SupervisorConfig)
     llm: LLM instance for guidance generation (provided or auto-configured)
-    base_claude_options: Pre-configured ClaudeCodeOptions for faster iterations
+    base_claude_options: Pre-configured ClaudeAgentOptions for faster iterations
     problem_description: Current problem being solved
     input_data: Input data provided for the problem (if any)
     output_data: Expected output data for validation (if any)
@@ -345,12 +345,11 @@ class BaseSupervisorAgent(ABC):
         utils.print_debug("Configured Claude Code to use Anthropic API")
 
     # Pre-configure Claude Code options for faster reuse in iterations
-    self.base_claude_options = ClaudeCodeOptions(
+    self.base_claude_options = ClaudeAgentOptions(
       cwd=os.getcwd(),
       permission_mode='acceptEdits',
       max_turns=claude_config.max_turns,
-      append_system_prompt=self.append_system_prompt,
-      max_thinking_tokens=claude_config.max_thinking_tokens,
+      system_prompt=self.append_system_prompt,
       allowed_tools=claude_config.tools
     )
     utils.print_debug("Pre-configured Claude Code options")
@@ -421,7 +420,7 @@ class BaseSupervisorAgent(ABC):
     state.messages = [claude_instructions]
     return state
 
-  async def _claude_run(self, claude_instructions: str, options: ClaudeCodeOptions,
+  async def _claude_run(self, claude_instructions: str, options: ClaudeAgentOptions,
                         state: PlanState | WorkflowState) -> None:
     """Run claude code session asynchronously and retrieve the messages"""
     try:
@@ -512,12 +511,11 @@ class BaseSupervisorAgent(ABC):
       utils.print_prompt(claude_instructions)
 
       # Prepare Claude Code options for this session
-      options = ClaudeCodeOptions(
+      options = ClaudeAgentOptions(
         cwd=self.base_claude_options.cwd,
         permission_mode=self.base_claude_options.permission_mode,
         max_turns=self.base_claude_options.max_turns,
-        append_system_prompt=self.base_claude_options.append_system_prompt,
-        max_thinking_tokens=self.base_claude_options.max_thinking_tokens,
+        system_prompt=self.base_claude_options.system_prompt,
         allowed_tools=self.base_claude_options.allowed_tools,
         continue_conversation=state.current_iteration > 0,
         resume=state.claude_session_id if state.claude_session_id else None
@@ -728,12 +726,11 @@ class BaseSupervisorAgent(ABC):
   def _execute_claude_plan_mode(self, state: PlanState, instructions: str) -> None:
     """Execute Claude Code in plan mode and capture plan content"""
     # Create plan-specific options
-    options = ClaudeCodeOptions(
+    options = ClaudeAgentOptions(
       cwd=self.base_claude_options.cwd,
       permission_mode='plan',
       max_turns=self.base_claude_options.max_turns,
-      append_system_prompt=self.base_claude_options.append_system_prompt,
-      max_thinking_tokens=self.base_claude_options.max_thinking_tokens,
+      system_prompt=self.base_claude_options.system_prompt,
       allowed_tools=self.base_claude_options.allowed_tools,
     )
     anyio.run(self._claude_run, instructions, options, state)
