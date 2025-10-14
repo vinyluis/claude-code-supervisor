@@ -4,7 +4,7 @@
 [![Python Support](https://img.shields.io/pypi/pyversions/claude-code-supervisor.svg)](https://pypi.org/project/claude-code-supervisor/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-An intelligent wrapper around Claude Code SDK that provides automated problem-solving capabilities with session management, progress monitoring, and intelligent feedback loops.
+An intelligent wrapper around Claude Agent SDK that provides automated problem-solving capabilities with session management, progress monitoring, and intelligent feedback loops.
 
 ## 🚀 Features
 
@@ -493,7 +493,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- [Claude Code SDK](https://github.com/anthropics/claude-code-sdk-python) for the core Claude Code integration
+- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) for the core Claude Code integration
 - [LangGraph](https://github.com/langchain-ai/langgraph) for workflow orchestration
 - [LangChain](https://github.com/langchain-ai/langchain) for LLM integrations
 

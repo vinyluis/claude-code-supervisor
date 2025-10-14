@@ -64,7 +64,6 @@ class ClaudeCodeConfig:
     executable_args: Additional arguments for Claude Code executable (default: [])
     claude_code_path: Custom path to Claude Code executable (default: auto-detect)
     max_turns: Maximum turns per Claude Code session (default: None = unlimited)
-    max_thinking_tokens: Maximum thinking tokens for Claude Code (default: 8000)
     tools: List of tools available to Claude Code (default: all tools)
     max_plan_iterations: Maximum plan review cycles before auto-approval (default: 3)
     plan_review_enabled: Enable LLM-powered plan review and refinement (default: True)
@@ -76,7 +75,6 @@ class ClaudeCodeConfig:
   executable_args: list[str] = field(default_factory=list)
   claude_code_path: str | None = None
   max_turns: int | None = None
-  max_thinking_tokens: int = 8000
   tools: list[str] = field(default_factory=lambda: ToolsEnum.all())
   max_plan_iterations: int = 3
   plan_review_enabled: bool = True
@@ -237,7 +235,7 @@ def plan_mode_config(
     >>> # Thorough plan review
     >>> config = plan_mode_config(max_plan_iterations=5, plan_auto_approval_threshold=0.9)
     >>> agent = SupervisorAgent(config=config)
-    
+
     >>> # Quick plan mode
     >>> config = plan_mode_config(max_plan_iterations=1, plan_review_enabled=False)
     >>> agent = SupervisorAgent(config=config)
