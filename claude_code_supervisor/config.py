@@ -68,6 +68,8 @@ class ClaudeCodeConfig:
     max_plan_iterations: Maximum plan review cycles before auto-approval (default: 3)
     plan_review_enabled: Enable LLM-powered plan review and refinement (default: True)
     plan_auto_approval_threshold: LLM confidence score threshold for auto-approval (default: 0.8)
+    suppress_cli_warnings: Suppress known harmless warnings from Claude Code CLI (default: True)
+    cli_warning_patterns: Patterns of CLI warnings to suppress (default: pre-flight warnings)
   """
   use_bedrock: bool = False
   working_directory: str | None = None
@@ -79,6 +81,11 @@ class ClaudeCodeConfig:
   max_plan_iterations: int = 3
   plan_review_enabled: bool = True
   plan_auto_approval_threshold: float = 0.8
+  suppress_cli_warnings: bool = True
+  cli_warning_patterns: list[str] = field(default_factory=lambda: [
+    'Pre-flight check is taking longer than expected',
+    'Pre-flight check',  # Broader match if needed
+  ])
 
 
 @dataclass

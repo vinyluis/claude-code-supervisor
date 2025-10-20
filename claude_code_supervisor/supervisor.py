@@ -486,7 +486,19 @@ class BaseSupervisorAgent(ABC):
           break
 
         elif isinstance(message, SystemMessage):
-          utils.print_info(f"System: {message.subtype}")
+          # Filter CLI warnings if configured
+          message_text = str(message.subtype)
+          should_suppress = False
+
+          if self.config.claude_code.suppress_cli_warnings:
+            for pattern in self.config.claude_code.cli_warning_patterns:
+              if pattern in message_text:
+                should_suppress = True
+                utils.print_debug(f"Suppressed CLI warning: {message_text[:100]}")
+                break
+
+          if not should_suppress:
+            utils.print_info(f"System: {message.subtype}")
 
     except Exception as e:
       # Let SDK handle its own errors - only handle real failures
@@ -582,7 +594,16 @@ class BaseSupervisorAgent(ABC):
         input_data=self.input_data,
         output_data=self.output_data,
       )
-      state.messages = [claude_instructions]
+
+      # If this is a refinement iteration, the refinement feedback is already in state.messages
+      # Only replace messages on the first iteration to preserve refinement guidance
+      if state.plan_iteration == 0:
+        state.messages = [claude_instructions]
+      # else: state.messages already contains original instructions + refinement feedback
+
+      # Display the prompt
+      utils.print_with_timestamp("💬 Plan mode prompt:")
+      utils.print_prompt(claude_instructions)
 
       # Execute Claude in plan mode
       self._execute_claude_plan_mode(state, claude_instructions)
@@ -963,7 +984,8 @@ class BaseSupervisorAgent(ABC):
       utils.print_success("✅ Solution validation successful - marking as complete")
 
       # Extract output data if needed (for data science workflows)
-      if self.input_data is not None:
+      # Only extract if we have a solution_path (skip in integration mode)
+      if self.input_data is not None and self.solution_path is not None:
         state = self._extract_output_data(state)
         # If output extraction fails, it doesn't invalidate the solution
         # since tests already passed
