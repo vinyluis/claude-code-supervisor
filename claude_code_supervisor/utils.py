@@ -80,8 +80,39 @@ def print_info(message: str, line_break: bool = True) -> None:
   print_with_timestamp(f"ℹ️  {message}", "cyan", line_break)
 
 
-def print_prompt(message: str, line_break: bool = True) -> None:
-  """Print prompt message with timestamp and green color"""
+def print_prompt(
+  message: str,
+  line_break: bool = True,
+  truncate: bool = False,
+  head_lines: int = 100,
+  tail_lines: int = 100
+) -> None:
+  """
+  Print prompt message with timestamp and green color, optionally truncating long messages.
+
+  :param message: The prompt message to display
+  :type message: str
+  :param line_break: Whether to add a line break after the message
+  :type line_break: bool
+  :param truncate: Whether to truncate the message if it exceeds head_lines + tail_lines
+  :type truncate: bool
+  :param head_lines: Number of lines to show from the start when truncated
+  :type head_lines: int
+  :param tail_lines: Number of lines to show from the end when truncated
+  :type tail_lines: int
+  """
+  if truncate:
+    lines = message.split('\n')
+    min_lines = head_lines + tail_lines
+
+    if len(lines) > min_lines:
+      omitted_lines = len(lines) - head_lines - tail_lines
+      message = (
+        '\n'.join(lines[:head_lines]) +
+        f"\n\n... ({omitted_lines} lines omitted) ...\n\n" +
+        '\n'.join(lines[-tail_lines:])
+      )
+
   print_with_timestamp(f"💬 {message}", "green", line_break)
 
 
@@ -645,3 +676,71 @@ def node_encountered_quota_error(state: 'WorkflowState') -> bool:
     or any(is_quota_error(log) for log in state.claude_log[-3:])  # Recent logs
     or (state.error_message and 'quota exceeded' in state.error_message.lower())  # Error message
   )
+
+
+def format_conversation_with_roles(
+  user_messages: list[str],
+  assistant_messages: list[str] | None = None,
+  user_labels: list[str] | None = None,
+  assistant_labels: list[str] | None = None
+) -> str:
+  """
+  Format a conversation with role markers for multi-turn context.
+
+  This function interleaves user and assistant messages with clear role markers,
+  allowing the agent to understand the full conversation history when restarted.
+
+  :param user_messages: List of user messages (e.g., instructions, feedback)
+  :type user_messages: list[str]
+  :param assistant_messages: Optional list of assistant responses
+  :type assistant_messages: list[str] | None
+  :param user_labels: Optional custom labels for user messages (defaults to "USER - Message N")
+  :type user_labels: list[str] | None
+  :param assistant_labels: Optional custom labels for assistant messages
+  :type assistant_labels: list[str] | None
+  :returns: Formatted conversation string with role markers
+  :rtype: str
+
+  Example:
+    >>> user_msgs = ["Original task", "Refinement feedback"]
+    >>> asst_msgs = ["My plan"]
+    >>> user_lbls = ["Original Instructions", "Plan Refinement"]
+    >>> asst_lbls = ["Previous Plan"]
+    >>> result = format_conversation_with_roles(user_msgs, asst_msgs, user_lbls, asst_lbls)
+    [USER - Original Instructions]
+    Original task
+
+    ============================================================
+
+    [ASSISTANT - Previous Plan]
+    My plan
+
+    ============================================================
+
+    [USER - Plan Refinement]
+    Refinement feedback
+  """
+  if not user_messages:
+    return ""
+
+  formatted_parts = []
+  separator = "\n" + "="*60 + "\n"
+
+  # Prepare labels
+  if user_labels is None:
+    user_labels = [f"Message {i+1}" for i in range(len(user_messages))]
+  if assistant_messages and assistant_labels is None:
+    assistant_labels = [f"Response {i+1}" for i in range(len(assistant_messages))]
+
+  # Interleave messages
+  for i, user_msg in enumerate(user_messages):
+    # Add user message
+    user_label = user_labels[i] if i < len(user_labels) else f"Message {i+1}"
+    formatted_parts.append(f"[USER - {user_label}]\n{user_msg}")
+
+    # Add corresponding assistant message if available
+    if assistant_messages and i < len(assistant_messages):
+      asst_label = assistant_labels[i] if assistant_labels and i < len(assistant_labels) else f"Response {i+1}"
+      formatted_parts.append(f"[ASSISTANT - {asst_label}]\n{assistant_messages[i]}")
+
+  return separator.join(formatted_parts)

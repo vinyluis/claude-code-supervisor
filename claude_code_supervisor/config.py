@@ -70,6 +70,9 @@ class ClaudeCodeConfig:
     plan_auto_approval_threshold: LLM confidence score threshold for auto-approval (default: 0.8)
     suppress_cli_warnings: Suppress known harmless warnings from Claude Code CLI (default: True)
     cli_warning_patterns: Patterns of CLI warnings to suppress (default: pre-flight warnings)
+    enable_prompt_preview_truncation: Enable truncation of long prompts in refinement (default: False)
+    prompt_preview_head_lines: Number of lines to show from start of prompt when truncated (default: 100)
+    prompt_preview_tail_lines: Number of lines to show from end of prompt when truncated (default: 100)
   """
   use_bedrock: bool = False
   working_directory: str | None = None
@@ -86,6 +89,9 @@ class ClaudeCodeConfig:
     'Pre-flight check is taking longer than expected',
     'Pre-flight check',  # Broader match if needed
   ])
+  enable_prompt_preview_truncation: bool = False
+  prompt_preview_head_lines: int = 100
+  prompt_preview_tail_lines: int = 100
 
 
 @dataclass

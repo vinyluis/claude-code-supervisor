@@ -599,14 +599,44 @@ class BaseSupervisorAgent(ABC):
       # Only replace messages on the first iteration to preserve refinement guidance
       if state.plan_iteration == 0:
         state.messages = [claude_instructions]
-      # else: state.messages already contains original instructions + refinement feedback
+        prompt_to_send = claude_instructions
+      else:
+        # Refinement iteration: format full conversation with role markers
+        # state.messages contains: [original_instructions, refinement_feedback_1, refinement_feedback_2, ...]
+        # state.plan_history contains: [plan_1, plan_2, ...]
+
+        # Prepare custom labels for clarity
+        user_labels = ["Original Plan Instructions"]
+        user_labels.extend([f"Plan Refinement Guidance {i}" for i in range(1, len(state.messages))])
+
+        assistant_labels = [f"Previous Plan (Iteration {i+1})" for i in range(len(state.plan_history))]
+
+        # Format conversation with roles
+        prompt_to_send = utils.format_conversation_with_roles(
+          user_messages=state.messages,
+          assistant_messages=state.plan_history,
+          user_labels=user_labels,
+          assistant_labels=assistant_labels
+        )
 
       # Display the prompt
       utils.print_with_timestamp("💬 Plan mode prompt:")
-      utils.print_prompt(claude_instructions)
+      if state.plan_iteration == 0:
+        utils.print_prompt(claude_instructions)
+      else:
+        utils.print_with_timestamp(
+          f"📝 Sending full conversation history "
+          f"({len(state.messages)} user messages, {len(state.plan_history)} assistant messages)"
+        )
+        utils.print_prompt(
+          prompt_to_send,
+          truncate=self.config.claude_code.enable_prompt_preview_truncation,
+          head_lines=self.config.claude_code.prompt_preview_head_lines,
+          tail_lines=self.config.claude_code.prompt_preview_tail_lines
+        )
 
       # Execute Claude in plan mode
-      self._execute_claude_plan_mode(state, claude_instructions)
+      self._execute_claude_plan_mode(state, prompt_to_send)
 
       # Check for errors
       if self._plan_node_encountered_error(state):
