@@ -286,6 +286,7 @@ class BaseSupervisorAgent(ABC):
     self.instruction_prompt: str = prompts.instruction_prompt()
     self.plan_mode_instruction_prompt: str = prompts.plan_mode_instruction_prompt()
     self.test_instructions: str = prompts.test_instructions(self.solution_path)
+    self.plan_review_prompt: str = prompts.plan_review_template()
 
     # Check for credentials on the kwargs
     if 'aws_access_key_id' in kwargs:
@@ -796,7 +797,7 @@ class BaseSupervisorAgent(ABC):
 
   def _get_plan_review_prompt(self, state: PlanState) -> str:
     """Generate plan review prompt"""
-    template = prompts.plan_review_template()
+    template = self.plan_review_prompt
     return template.format(
       problem_description=self.problem_description,
       input_data=str(self.input_data) if self.input_data is not None else "None provided",
@@ -1829,6 +1830,7 @@ Please update your todo list and continue working on the solution, addressing th
       instruction_prompt: Custom instruction prompt for Claude Code
       plan_mode_instruction_prompt: Custom instruction prompt for Claude Code on plan mode
       test_instructions: Custom instructions for running tests
+      plan_review_prompt: Custom prompt template for reviewing execution plans (uses prompts.plan_review_template() by default)
 
     Returns:
       WorkflowState with results after processing complete
@@ -1846,6 +1848,7 @@ Please update your todo list and continue working on the solution, addressing th
     self.instruction_prompt = kwargs.get('instruction_prompt') or prompts.instruction_prompt()
     self.plan_mode_instruction_prompt = kwargs.get('plan_mode_instruction_prompt') or prompts.plan_mode_instruction_prompt()
     self.test_instructions = kwargs.get('test_instructions') or prompts.test_instructions(self.solution_path)
+    self.plan_review_prompt = kwargs.get('plan_review_prompt') or prompts.plan_review_template()
 
     # Create initial execution state
     execution_state = WorkflowState()

@@ -246,32 +246,64 @@ Follow this systematic 3-step evaluation process:
    - Is the plan clear and actionable for implementation?
 </plan_evaluation_approach>
 
+<trust_specificity_principle>
+**CRITICAL: Reward Specific, Actionable Plans**
+
+In test-driven development environments:
+- **Specific assumptions > Vague investigation steps**
+- Plans that make informed decisions and iterate > Plans that over-validate upfront
+- "Update function X to use approach Y" > "First investigate all possible approaches"
+
+**Why Specificity Matters**:
+- Wrong assumptions fail fast with clear feedback from tests
+- Agent learns from test output and adjusts quickly
+- Vague "investigate first" steps waste iteration cycles
+
+**Scoring Guidance**:
+- ✅ **REWARD**: Specific implementation decisions based on code analysis
+- ✅ **REWARD**: Direct action plans that will discover issues through execution
+- ❌ **DON'T PENALIZE**: Making reasonable assumptions from available information
+- ❌ **DON'T PENALIZE**: Not including exhaustive pre-validation when tests will validate
+- ❌ **DON'T REWARD**: Overly cautious plans that defer decisions
+
+**Good Specific Plan** (deserves 0.7+):
+- Clear implementation steps with concrete decisions
+- Based on reasonable analysis of existing code/data
+- Will either work or fail with actionable feedback
+
+**Bad Vague Plan** (deserves 0.4-):
+- Multiple "investigate", "verify", "determine" steps before action
+- Defers concrete decisions unnecessarily
+- Wastes cycles on pre-validation that tests would catch
+</trust_specificity_principle>
+
 <scoring_guidelines>
 Use this structured scoring framework (0.0-1.0):
 
 **0.0-0.3: Poor Plan Quality**
-- Missing critical components or steps
-- Technically infeasible or fundamentally flawed approaches
-- Lacks essential testing or validation considerations
-- Unclear or contradictory instructions
+- Missing critical understanding of the problem
+- Fundamentally flawed or impossible approaches
+- No clear path to implementation
+- Contradictory or incoherent instructions
 
-**0.4-0.6: Adequate Plan Quality**
-- Covers basic requirements but missing important details
-- Generally feasible but may have some technical issues
-- Basic testing approach but limited validation strategy
-- Somewhat clear but could benefit from more specificity
+**0.4-0.6: Needs Improvement**
+- Overly vague or cautious ("investigate first", "verify everything")
+- Missing clear implementation steps
+- Too much pre-validation instead of test-driven iteration
+- Unclear what concrete actions to take
 
-**0.7-0.8: Good Plan Quality**
-- Comprehensive coverage of requirements and dependencies
-- Technically sound and well-structured approach
-- Includes proper testing and validation strategy
-- Clear, actionable steps with good organization
+**0.7-0.8: Good Plan Quality** ← Target for specific, informed plans
+- **Specific, actionable implementation steps**
+- Clear understanding of problem and solution approach
+- Makes reasonable assumptions that will be validated through execution
+- May not cover every edge case (tests will reveal them)
+- Will work directly or fail fast with clear feedback
 
-**0.9-1.0: Excellent Plan Quality**
-- Complete, thorough coverage of all aspects
-- Optimal technical approach with best practices
-- Comprehensive testing and error handling strategy
-- Exceptionally clear, detailed, and well-organized
+**0.9-1.0: Exceptional Plan Quality** ← Rare, reserve for outstanding
+- Everything in 0.7-0.8 PLUS exceptional insights
+- Elegant solutions to complex problems
+- Deep domain expertise evident
+- Anticipates complex scenarios proactively
 </scoring_guidelines>
 
 <problem_context>
@@ -296,6 +328,16 @@ Provide a structured analysis with:
 3. **Specific Improvements**: Concrete suggestions for enhancement
 4. **Risk Assessment**: Potential problems and mitigation strategies
 5. **Overall Score**: Numeric score (0.0-1.0) based on scoring guidelines
+
+**CRITICAL EVALUATION PRINCIPLE**:
+Specific plans with informed assumptions should score 0.7-0.8, NOT be penalized.
+
+When a plan makes a specific implementation decision based on code analysis:
+- ✅ This demonstrates good judgment - score 0.7+ if logic is sound
+- ❌ Don't penalize for not "verifying first" - that's what test-driven development is for
+- ❌ Don't demand exhaustive upfront checks - execution will validate assumptions
+
+Focus criticism on plans that are vague, contradictory, or fundamentally flawed - not plans that make reasonable, testable assumptions.
 
 For scores below 0.8, provide specific, actionable feedback for plan improvement:
 - What key components are missing?
