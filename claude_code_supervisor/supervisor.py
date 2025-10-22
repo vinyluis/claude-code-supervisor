@@ -52,8 +52,8 @@ from langchain_openai import ChatOpenAI
 from langchain_aws import ChatBedrockConverse
 from claude_agent_sdk import query, ClaudeAgentOptions
 from claude_agent_sdk.types import (
-  AssistantMessage, TextBlock, ToolUseBlock, ToolResultBlock, ResultMessage,
-  SystemMessage
+    AssistantMessage, TextBlock, ToolUseBlock, ToolResultBlock, ResultMessage,
+    SystemMessage
 )
 from dotenv import load_dotenv
 from .config import SupervisorConfig, development_config
@@ -69,40 +69,40 @@ warnings.filterwarnings("ignore", message=".*Attempted to exit cancel scope in a
 
 
 class AsyncioErrorFilter:
-    """
-    A stderr filter that suppresses specific asyncio-related error messages from the Claude Code SDK.
+  """
+  A stderr filter that suppresses specific asyncio-related error messages from the Claude Code SDK.
 
-    The Claude Code SDK uses anyio for async task management, which can generate harmless but
-    confusing error messages when tasks are cancelled or when cancel scopes exit in different
-    tasks. These errors don't affect functionality but create noise in the output.
+  The Claude Code SDK uses anyio for async task management, which can generate harmless but
+  confusing error messages when tasks are cancelled or when cancel scopes exit in different
+  tasks. These errors don't affect functionality but create noise in the output.
 
-    This filter intercepts stderr output and suppresses the following specific error patterns:
-    - "Task exception was never retrieved"
-    - "cancel scope in a different task"
-    - "RuntimeError: Attempted to exit cancel scope in a different task"
+  This filter intercepts stderr output and suppresses the following specific error patterns:
+  - "Task exception was never retrieved"
+  - "cancel scope in a different task"
+  - "RuntimeError: Attempted to exit cancel scope in a different task"
 
-    All other stderr output is passed through unchanged, preserving legitimate error messages.
+  All other stderr output is passed through unchanged, preserving legitimate error messages.
 
-    The filter is installed at module import time to ensure it catches errors that occur
-    during the cleanup phase of async operations.
-    """
+  The filter is installed at module import time to ensure it catches errors that occur
+  during the cleanup phase of async operations.
+  """
 
-    def __init__(self, original_stderr):
-      self.original_stderr = original_stderr
-      self.buffer = []
+  def __init__(self, original_stderr):
+    self.original_stderr = original_stderr
+    self.buffer = []
 
-    def write(self, text):
-      if ("Task exception was never retrieved" in text
-          or "cancel scope in a different task" in text
-          or "RuntimeError: Attempted to exit cancel scope" in text):
-        return  # Suppress these specific errors
-      self.original_stderr.write(text)
+  def write(self, text):
+    if ("Task exception was never retrieved" in text
+        or "cancel scope in a different task" in text
+            or "RuntimeError: Attempted to exit cancel scope" in text):
+      return  # Suppress these specific errors
+    self.original_stderr.write(text)
 
-    def flush(self):
-      self.original_stderr.flush()
+  def flush(self):
+    self.original_stderr.flush()
 
-    def __getattr__(self, name):
-      return getattr(self.original_stderr, name)
+  def __getattr__(self, name):
+    return getattr(self.original_stderr, name)
 
 
 # Install the filter at module import time
@@ -258,11 +258,11 @@ class BaseSupervisorAgent(ABC):
   """
 
   def __init__(
-    self,
-    llm: BaseLanguageModel | None = None,
-    config: SupervisorConfig | None = None,
-    append_system_prompt: str | None = None,
-    **kwargs,
+      self,
+      llm: BaseLanguageModel | None = None,
+      config: SupervisorConfig | None = None,
+      append_system_prompt: str | None = None,
+      **kwargs,
   ) -> None:
 
     self.load_environment()
@@ -340,18 +340,19 @@ class BaseSupervisorAgent(ABC):
     else:
       # Default to Anthropic API
       if not os.getenv("ANTHROPIC_API_KEY"):
-        utils.print_warning("Warning: ANTHROPIC_API_KEY not found in environment. Claude Code SDK may not work properly.")
+        utils.print_warning(
+            "Warning: ANTHROPIC_API_KEY not found in environment. Claude Code SDK may not work properly.")
         utils.print_warning("Please set your API key in the .env file or environment variables.")
       else:
         utils.print_debug("Configured Claude Code to use Anthropic API")
 
     # Pre-configure Claude Code options for faster reuse in iterations
     self.base_claude_options = ClaudeAgentOptions(
-      cwd=os.getcwd(),
-      permission_mode='acceptEdits',
-      max_turns=claude_config.max_turns,
-      system_prompt=self.append_system_prompt,
-      allowed_tools=claude_config.tools
+        cwd=os.getcwd(),
+        permission_mode='acceptEdits',
+        max_turns=claude_config.max_turns,
+        system_prompt=self.append_system_prompt,
+        allowed_tools=claude_config.tools
     )
     utils.print_debug("Pre-configured Claude Code options")
 
@@ -365,26 +366,27 @@ class BaseSupervisorAgent(ABC):
 
     elif provider == 'bedrock':
       if not os.getenv('AWS_ACCESS_KEY_ID') or not os.getenv('AWS_SECRET_ACCESS_KEY'):
-        raise ValueError("AWS credentials not found in environment variables. Please set 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', and 'AWS_REGION'.")
+        raise ValueError(
+            "AWS credentials not found in environment variables. Please set 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', and 'AWS_REGION'.")
       aws_key = os.getenv('AWS_ACCESS_KEY_ID')
       aws_secret = os.getenv('AWS_SECRET_ACCESS_KEY')
       aws_region = os.getenv('AWS_REGION')
       if aws_key is None or aws_secret is None:
         raise ValueError("AWS credentials validation failed")
       return ChatBedrockConverse(
-        model=agent_config.model_name,
-        temperature=agent_config.temperature,
-        aws_access_key_id=aws_key,
-        aws_secret_access_key=aws_secret,
-        region_name=aws_region,
+          model=agent_config.model_name,
+          temperature=agent_config.temperature,
+          aws_access_key_id=aws_key,
+          aws_secret_access_key=aws_secret,
+          region_name=aws_region,
       )
 
     elif provider == 'openai':
       if not os.getenv('OPENAI_API_KEY'):
         raise ValueError("OpenAI API key not found in environment variables. Please set 'OPENAI_API_KEY'.")
       return ChatOpenAI(
-        model=agent_config.model_name,
-        temperature=agent_config.temperature,
+          model=agent_config.model_name,
+          temperature=agent_config.temperature,
       )
 
     else:
@@ -408,15 +410,15 @@ class BaseSupervisorAgent(ABC):
 
     # Build the initial prompt with approved plan if available
     claude_instructions = prompts.build_claude_instructions(
-      instruction_prompt=self.instruction_prompt,
-      problem_description=self.problem_description,
-      development_guidelines=self.development_guidelines,
-      test_instructions=self.test_instructions,
-      solution_path=self.solution_path,
-      test_path=self.test_path,
-      input_data=self.input_data,
-      output_data=self.output_data,
-      approved_plan=state.approved_plan,
+        instruction_prompt=self.instruction_prompt,
+        problem_description=self.problem_description,
+        development_guidelines=self.development_guidelines,
+        test_instructions=self.test_instructions,
+        solution_path=self.solution_path,
+        test_path=self.test_path,
+        input_data=self.input_data,
+        output_data=self.output_data,
+        approved_plan=state.approved_plan,
     )
     state.messages = [claude_instructions]
     return state
@@ -446,7 +448,8 @@ class BaseSupervisorAgent(ABC):
                 return  # Exit cleanly, letting node handle workflow decisions
 
             elif isinstance(block, ToolUseBlock):
-              tool_info = utils.get_tool_info(block.name, block.input)
+              max_length = self.config.claude_code.tool_description_max_length
+              tool_info = utils.get_tool_info(block.name, block.input, max_length=max_length)
               utils.print_tool(f"{utils.blue('Tool:')} {utils.blue(block.name)} {tool_info}")
 
               # Track todo updates
@@ -481,7 +484,12 @@ class BaseSupervisorAgent(ABC):
           # Session completed successfully
           state.claude_session_id = message.session_id
           utils.print_success(f"Claude session completed (ID: {message.session_id})")
-          utils.print_with_timestamp(f"{utils.cyan('Turns:')} {message.num_turns}, {utils.cyan('Duration:')} {message.duration_ms}ms")
+          utils.print_with_timestamp(
+              f"{
+                  utils.cyan('Turns:')} {
+                  message.num_turns}, {
+                  utils.cyan('Duration:')} {
+                  message.duration_ms}ms")
           if message.total_cost_usd:
             utils.print_with_timestamp(f"{utils.cyan('Cost:')} ${message.total_cost_usd:.4f}")
           break
@@ -525,13 +533,13 @@ class BaseSupervisorAgent(ABC):
 
       # Prepare Claude Code options for this session
       options = ClaudeAgentOptions(
-        cwd=self.base_claude_options.cwd,
-        permission_mode=self.base_claude_options.permission_mode,
-        max_turns=self.base_claude_options.max_turns,
-        system_prompt=self.base_claude_options.system_prompt,
-        allowed_tools=self.base_claude_options.allowed_tools,
-        continue_conversation=state.current_iteration > 0,
-        resume=state.claude_session_id if state.claude_session_id else None
+          cwd=self.base_claude_options.cwd,
+          permission_mode=self.base_claude_options.permission_mode,
+          max_turns=self.base_claude_options.max_turns,
+          system_prompt=self.base_claude_options.system_prompt,
+          allowed_tools=self.base_claude_options.allowed_tools,
+          continue_conversation=state.current_iteration > 0,
+          resume=state.claude_session_id if state.claude_session_id else None
       )
 
       # Execute async operation within this node's boundary
@@ -586,14 +594,14 @@ class BaseSupervisorAgent(ABC):
 
       # Build plan mode prompt
       claude_instructions = prompts.build_claude_instructions(
-        instruction_prompt=self.plan_mode_instruction_prompt,
-        problem_description=self.problem_description,
-        development_guidelines=self.development_guidelines,
-        test_instructions=self.test_instructions,
-        solution_path=self.solution_path,
-        test_path=self.test_path,
-        input_data=self.input_data,
-        output_data=self.output_data,
+          instruction_prompt=self.plan_mode_instruction_prompt,
+          problem_description=self.problem_description,
+          development_guidelines=self.development_guidelines,
+          test_instructions=self.test_instructions,
+          solution_path=self.solution_path,
+          test_path=self.test_path,
+          input_data=self.input_data,
+          output_data=self.output_data,
       )
 
       # If this is a refinement iteration, the refinement feedback is already in state.messages
@@ -610,14 +618,14 @@ class BaseSupervisorAgent(ABC):
         user_labels = ["Original Plan Instructions"]
         user_labels.extend([f"Plan Refinement Guidance {i}" for i in range(1, len(state.messages))])
 
-        assistant_labels = [f"Previous Plan (Iteration {i+1})" for i in range(len(state.plan_history))]
+        assistant_labels = [f"Previous Plan (Iteration {i + 1})" for i in range(len(state.plan_history))]
 
         # Format conversation with roles
         prompt_to_send = utils.format_conversation_with_roles(
-          user_messages=state.messages,
-          assistant_messages=state.plan_history,
-          user_labels=user_labels,
-          assistant_labels=assistant_labels
+            user_messages=state.messages,
+            assistant_messages=state.plan_history,
+            user_labels=user_labels,
+            assistant_labels=assistant_labels
         )
 
       # Display the prompt
@@ -626,14 +634,14 @@ class BaseSupervisorAgent(ABC):
         utils.print_prompt(claude_instructions)
       else:
         utils.print_with_timestamp(
-          f"📝 Sending full conversation history "
-          f"({len(state.messages)} user messages, {len(state.plan_history)} assistant messages)"
+            f"📝 Sending full conversation history "
+            f"({len(state.messages)} user messages, {len(state.plan_history)} assistant messages)"
         )
         utils.print_prompt(
-          prompt_to_send,
-          truncate=self.config.claude_code.enable_prompt_preview_truncation,
-          head_lines=self.config.claude_code.prompt_preview_head_lines,
-          tail_lines=self.config.claude_code.prompt_preview_tail_lines
+            prompt_to_send,
+            truncate=self.config.claude_code.enable_prompt_preview_truncation,
+            head_lines=self.config.claude_code.prompt_preview_head_lines,
+            tail_lines=self.config.claude_code.prompt_preview_tail_lines
         )
 
       # Execute Claude in plan mode
@@ -670,7 +678,7 @@ class BaseSupervisorAgent(ABC):
       # Skip review if disabled or auto-approve conditions met
       config = self.config.claude_code
       if (not config.plan_review_enabled
-          or state.should_auto_approve_plan(config.plan_auto_approval_threshold)):
+              or state.should_auto_approve_plan(config.plan_auto_approval_threshold)):
         state.plan_approved = True
         state.plan_review_score = 1.0
         state.plan_feedback = "Auto-approved (review disabled or high confidence)"
@@ -694,7 +702,7 @@ class BaseSupervisorAgent(ABC):
 
       # Auto-approve logic
       if (state.should_auto_approve_plan(config.plan_auto_approval_threshold)
-          or state.should_end_for_max_plan_iterations(config.max_plan_iterations)):
+              or state.should_end_for_max_plan_iterations(config.max_plan_iterations)):
         state.plan_approved = True
         if state.should_end_for_max_plan_iterations(config.max_plan_iterations):
           state.plan_feedback = f"Auto-approved after {config.max_plan_iterations} iterations"
@@ -759,7 +767,8 @@ class BaseSupervisorAgent(ABC):
     utils.print_with_timestamp("✅ Routing to plan review")
     return PlanModeNodes.REVIEW_PLAN
 
-  def _plan_review_decision(self, state: PlanState) -> Literal[PlanModeNodes.REFINE_PLAN, PlanModeNodes.APPROVE_PLAN, '__end__']:
+  def _plan_review_decision(
+          self, state: PlanState) -> Literal[PlanModeNodes.REFINE_PLAN, PlanModeNodes.APPROVE_PLAN, '__end__']:
     """Route after plan review"""
     if state.should_terminate_early:
       utils.print_with_timestamp("🚫 Terminating due to error")
@@ -767,7 +776,7 @@ class BaseSupervisorAgent(ABC):
 
     config = self.config.claude_code
     if (state.plan_approved
-        or not state.should_retry_plan(config.max_plan_iterations)):
+            or not state.should_retry_plan(config.max_plan_iterations)):
       utils.print_with_timestamp("✅ Routing to approve plan")
       return PlanModeNodes.APPROVE_PLAN
 
@@ -779,42 +788,42 @@ class BaseSupervisorAgent(ABC):
     """Execute Claude Code in plan mode and capture plan content"""
     # Create plan-specific options
     options = ClaudeAgentOptions(
-      cwd=self.base_claude_options.cwd,
-      permission_mode='plan',
-      max_turns=self.base_claude_options.max_turns,
-      system_prompt=self.base_claude_options.system_prompt,
-      allowed_tools=self.base_claude_options.allowed_tools,
+        cwd=self.base_claude_options.cwd,
+        permission_mode='plan',
+        max_turns=self.base_claude_options.max_turns,
+        system_prompt=self.base_claude_options.system_prompt,
+        allowed_tools=self.base_claude_options.allowed_tools,
     )
     anyio.run(self._claude_run, instructions, options, state)
 
   def _plan_node_encountered_error(self, state: PlanState) -> bool:
     """Check if plan node encountered errors"""
     return bool(
-      state.should_terminate_early
-      or (state.error_message and any(error in state.error_message.lower()
-                                  for error in ['credit balance', 'quota exceeded', 'rate limit']))
+        state.should_terminate_early
+        or (state.error_message and any(error in state.error_message.lower()
+                                        for error in ['credit balance', 'quota exceeded', 'rate limit']))
     )
 
   def _get_plan_review_prompt(self, state: PlanState) -> str:
     """Generate plan review prompt"""
     template = self.plan_review_prompt
     return template.format(
-      problem_description=self.problem_description,
-      input_data=str(self.input_data) if self.input_data is not None else "None provided",
-      output_data=str(self.output_data) if self.output_data is not None else "None provided",
-      development_context=self.development_guidelines,
-      claude_plan=state.plan_content
+        problem_description=self.problem_description,
+        input_data=str(self.input_data) if self.input_data is not None else "None provided",
+        output_data=str(self.output_data) if self.output_data is not None else "None provided",
+        development_context=self.development_guidelines,
+        claude_plan=state.plan_content
     )
 
   def _get_plan_refinement_prompt(self, state: PlanState) -> str:
     """Generate plan refinement prompt"""
     template = prompts.plan_refinement_guidance_template()
     return template.format(
-      problem_description=self.problem_description,
-      plan_iteration=state.plan_iteration,
-      plan_review_score=state.plan_review_score,
-      plan_feedback=state.plan_feedback,
-      previous_plan=state.plan_content
+        problem_description=self.problem_description,
+        plan_iteration=state.plan_iteration,
+        plan_review_score=state.plan_review_score,
+        plan_feedback=state.plan_feedback,
+        previous_plan=state.plan_content
     )
 
   def _parse_plan_review_result(self, review_result: str) -> dict:
@@ -831,12 +840,12 @@ class BaseSupervisorAgent(ABC):
 
     # Fallback parsing for non-JSON responses
     return {
-      'overall_score': 0.5,
-      'strengths': ["Plan structure provided"],
-      'specific_improvements': ["Review response was not in expected JSON format"],
-      'risk_assessment': ["Unable to properly parse review results"],
-      'recommendation': 'refine',
-      'feedback_summary': review_result[:200] + ('...' if len(review_result) > 200 else '')
+        'overall_score': 0.5,
+        'strengths': ["Plan structure provided"],
+        'specific_improvements': ["Review response was not in expected JSON format"],
+        'risk_assessment': ["Unable to properly parse review results"],
+        'recommendation': 'refine',
+        'feedback_summary': review_result[:200] + ('...' if len(review_result) > 200 else '')
     }
 
   def _display_plan_review_results(self, state: PlanState) -> None:
@@ -956,7 +965,7 @@ class BaseSupervisorAgent(ABC):
     else:
       # Standard mode: check if both files exist
       if (self.solution_path and os.path.exists(self.solution_path)
-          and self.test_path and os.path.exists(self.test_path)):
+              and self.test_path and os.path.exists(self.test_path)):
         utils.print_success("Both solution and test files exist, validating")
         return 'validate'
 
@@ -1002,7 +1011,8 @@ class BaseSupervisorAgent(ABC):
         missing_files.append(f"Test file {self.test_path}")
 
       if missing_files:
-        state.validation_feedback = f"Missing required files: {', '.join(missing_files)}. Please create these files before proceeding."
+        state.validation_feedback = f"Missing required files: {
+            ', '.join(missing_files)}. Please create these files before proceeding."
         utils.print_error(f"Missing files: {', '.join(missing_files)}")
         return state
 
@@ -1098,11 +1108,11 @@ class BaseSupervisorAgent(ABC):
     recent_messages = state.claude_log[-3:]  # Last 3 messages
 
     success_indicators = [
-      "tests are passing", "all tests pass", "tests passed", "test passed",
-      "successfully implemented", "task completed", "implementation complete",
-      "fix worked", "solution works", "working correctly", "working properly",
-      "all the tests are passing", "perfect! all", "great! all", "excellent! all",
-      "tests pass", "solution is complete", "implementation is working"
+        "tests are passing", "all tests pass", "tests passed", "test passed",
+        "successfully implemented", "task completed", "implementation complete",
+        "fix worked", "solution works", "working correctly", "working properly",
+        "all the tests are passing", "perfect! all", "great! all", "excellent! all",
+        "tests pass", "solution is complete", "implementation is working"
     ]
 
     for message in recent_messages:
@@ -1135,10 +1145,10 @@ class BaseSupervisorAgent(ABC):
     recent_messages = state.claude_log[-2:]  # Last 2 messages
 
     error_indicators = [
-      "error occurred", "failed to", "exception", "traceback",
-      "cannot", "unable to", "not working", "didn't work",
-      "tests are failing", "test failed", "tests failed",
-      "something went wrong", "issue with", "problem with"
+        "error occurred", "failed to", "exception", "traceback",
+        "cannot", "unable to", "not working", "didn't work",
+        "tests are failing", "test failed", "tests failed",
+        "something went wrong", "issue with", "problem with"
     ]
 
     for message in recent_messages:
@@ -1195,8 +1205,8 @@ class BaseSupervisorAgent(ABC):
 
     if len(guidance) <= 3:  # No specific commands found
       guidance.extend([
-        "Please refer to the test instructions provided to Claude for the exact commands.",
-        "The test instructions contain project-specific commands for running tests."
+          "Please refer to the test instructions provided to Claude for the exact commands.",
+          "The test instructions contain project-specific commands for running tests."
       ])
 
     return "\n".join(guidance)
@@ -1218,10 +1228,10 @@ class BaseSupervisorAgent(ABC):
 
     # Use LLM to analyze and determine strategy
     analysis_prompt = prompts.test_analysis_template().format(
-      claude_output=recent_output,
-      mentioned_items=mentioned_items,
-      test_instructions=self.test_instructions,
-      available_test_files=test_files
+        claude_output=recent_output,
+        mentioned_items=mentioned_items,
+        test_instructions=self.test_instructions,
+        available_test_files=test_files
     )
 
     analysis = self._call_llm("test_analysis", analysis_prompt)
@@ -1238,12 +1248,12 @@ class BaseSupervisorAgent(ABC):
 
     # Look for common patterns in Claude's output
     patterns = [
-      r'function[s]?\s+(\w+)',
-      r'class[es]?\s+(\w+)',
-      r'file[s]?\s+(\w+\.py)',
-      r'test[s]?\s+(\w+)',
-      r'created?\s+(\w+\.py)',
-      r'modified?\s+(\w+\.py)'
+        r'function[s]?\s+(\w+)',
+        r'class[es]?\s+(\w+)',
+        r'file[s]?\s+(\w+\.py)',
+        r'test[s]?\s+(\w+)',
+        r'created?\s+(\w+\.py)',
+        r'modified?\s+(\w+\.py)'
     ]
 
     mentioned = []
@@ -1259,9 +1269,9 @@ class BaseSupervisorAgent(ABC):
 
     # Default strategy
     strategy = {
-      'test_type': 'integration',
-      'test_files': available_files,
-      'command': [sys.executable, '-m', 'pytest'] + available_files + ['-v', '--tb=short', '--no-header']
+        'test_type': 'integration',
+        'test_files': available_files,
+        'command': [sys.executable, '-m', 'pytest'] + available_files + ['-v', '--tb=short', '--no-header']
     }
 
     # Look for specific instructions in the analysis
@@ -1281,11 +1291,11 @@ class BaseSupervisorAgent(ABC):
     """Run specific test files"""
     timeout = self.config.agent.test_timeout
     return subprocess.run(
-      [sys.executable, '-m', 'pytest'] + test_files + ['-v', '--tb=short', '--no-header'],
-      capture_output=True,
-      text=True,
-      timeout=timeout,
-      cwd=os.getcwd()
+        [sys.executable, '-m', 'pytest'] + test_files + ['-v', '--tb=short', '--no-header'],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=os.getcwd()
     )
 
   def _run_all_integration_tests(self) -> subprocess.CompletedProcess:
@@ -1300,19 +1310,19 @@ class BaseSupervisorAgent(ABC):
     if not test_files:
       # Create a dummy result if no tests found
       return subprocess.CompletedProcess(
-        args=['pytest'],
-        returncode=0,
-        stdout="No test files found",
-        stderr=""
+          args=['pytest'],
+          returncode=0,
+          stdout="No test files found",
+          stderr=""
       )
 
     timeout = self.config.agent.test_timeout
     return subprocess.run(
-      [sys.executable, '-m', 'pytest'] + test_files + ['-v', '--tb=short', '--no-header'],
-      capture_output=True,
-      text=True,
-      timeout=timeout,
-      cwd=os.getcwd()
+        [sys.executable, '-m', 'pytest'] + test_files + ['-v', '--tb=short', '--no-header'],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=os.getcwd()
     )
 
   def _generate_test_failure_feedback(self, result: subprocess.CompletedProcess, strategy: dict) -> str:
@@ -1380,7 +1390,7 @@ class BaseSupervisorAgent(ABC):
                 and hasattr(attr, '__name__')
                 and not isinstance(attr, type)
                 and hasattr(attr, '__module__')
-                and attr.__module__ == solution_module.__name__):
+                    and attr.__module__ == solution_module.__name__):
               functions.append(attr)
         if functions:
           main_function = functions[0]  # Use the first callable function
@@ -1542,7 +1552,10 @@ Please update your todo list and continue working on the solution, addressing th
     state.error_message = ""
 
     # Add a note to the log about the reduction
-    state.claude_log.append(f"MESSAGE_REDUCED: Original length {len(original_message)}, reduced to {len(reduced_message)}")
+    state.claude_log.append(
+        f"MESSAGE_REDUCED: Original length {
+            len(original_message)}, reduced to {
+            len(reduced_message)}")
 
     utils.print_success("Message reduced successfully - ready for retry")
 
@@ -1554,14 +1567,14 @@ Please update your todo list and continue working on the solution, addressing th
     example_output_section = f'Expected behavior: {self.example_output}' if self.example_output else ''
 
     analysis_prompt = prompts.error_guidance_template().format(
-      problem_description=self.problem_description,
-      example_output_section=example_output_section,
-      error_message=state.error_message,
-      test_results=state.test_results if state.test_results else 'No tests run yet',
-      current_iteration=state.current_iteration,
-      test_instructions=self.test_instructions,
-      todo_progress=self._format_todos_for_analysis(state.claude_todos),
-      recent_output=self._format_output_log_for_analysis(state.claude_log)
+        problem_description=self.problem_description,
+        example_output_section=example_output_section,
+        error_message=state.error_message,
+        test_results=state.test_results if state.test_results else 'No tests run yet',
+        current_iteration=state.current_iteration,
+        test_instructions=self.test_instructions,
+        todo_progress=self._format_todos_for_analysis(state.claude_todos),
+        recent_output=self._format_output_log_for_analysis(state.claude_log)
     )
 
     return self._call_llm("error_analysis", analysis_prompt)
@@ -1574,12 +1587,12 @@ Please update your todo list and continue working on the solution, addressing th
     recent_messages = "\n".join(state.claude_log[-3:]) if state.claude_log else "No recent messages"
 
     analysis_prompt = prompts.feedback_guidance_template().format(
-      problem_description=self.problem_description,
-      example_output_section=example_output_section,
-      validation_feedback=state.validation_feedback,
-      test_instructions=self.test_instructions,
-      recent_messages=recent_messages,
-      todo_progress=self._format_todos_for_analysis(state.claude_todos)
+        problem_description=self.problem_description,
+        example_output_section=example_output_section,
+        validation_feedback=state.validation_feedback,
+        test_instructions=self.test_instructions,
+        recent_messages=recent_messages,
+        todo_progress=self._format_todos_for_analysis(state.claude_todos)
     )
 
     return self._call_llm("feedback_analysis", analysis_prompt)
@@ -1648,7 +1661,8 @@ Please update your todo list and continue working on the solution, addressing th
     if self.test_path is not None and not os.path.exists(self.test_path):
       state.test_results = f"Test file {self.test_path} does not exist"
       state.is_solved = False
-      state.validation_feedback = f"Test file {self.test_path} was not created. Please create comprehensive tests for your solution."
+      state.validation_feedback = f"Test file {
+          self.test_path} was not created. Please create comprehensive tests for your solution."
       utils.print_error(f"Test file not found: {self.test_path}\n")
       return state
 
@@ -1657,7 +1671,8 @@ Please update your todo list and continue working on the solution, addressing th
       state.test_results = (f"Solution file {self.solution_path} "
                             'does not exist')
       state.is_solved = False
-      state.validation_feedback = f"Solution file {self.solution_path} was not created. Please implement your solution first."
+      state.validation_feedback = f"Solution file {
+          self.solution_path} was not created. Please implement your solution first."
       utils.print_error(f"Solution file not found: {self.solution_path}\n")
       return state
 
@@ -1687,12 +1702,12 @@ Please update your todo list and continue working on the solution, addressing th
         return state
 
       result = subprocess.run(
-        [sys.executable, '-m', 'pytest', self.test_path, '-v',
-         '--tb=short', '--no-header'],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=os.getcwd()  # Ensure we're in the right directory
+          [sys.executable, '-m', 'pytest', self.test_path, '-v',
+           '--tb=short', '--no-header'],
+          capture_output=True,
+          text=True,
+          timeout=timeout,
+          cwd=os.getcwd()  # Ensure we're in the right directory
       )
 
       state.test_results = (f"Exit code: {result.returncode}\n"
@@ -1706,7 +1721,8 @@ Please update your todo list and continue working on the solution, addressing th
       else:
         state.is_solved = False
         # Generate detailed feedback instead of just error message
-        state.validation_feedback = self._generate_test_failure_feedback(result, {'test_type': 'specific', 'test_files': [self.test_path]})
+        state.validation_feedback = self._generate_test_failure_feedback(
+            result, {'test_type': 'specific', 'test_files': [self.test_path]})
         utils.print_error(f"{utils.red('Tests failed')} (exit code: {result.returncode})")
         print(f"Test output:\n{result.stdout}")
         if result.stderr:
@@ -1728,7 +1744,8 @@ Please update your todo list and continue working on the solution, addressing th
     except Exception as e:
       state.test_results = f"Error running tests: {str(e)}"
       state.is_solved = False
-      state.validation_feedback = f"Error occurred while running tests: {str(e)}. Please check your test implementation."
+      state.validation_feedback = f"Error occurred while running tests: {
+          str(e)}. Please check your test implementation."
       utils.print_error(f"Error running tests: {str(e)}\n")
 
     return state
@@ -1736,7 +1753,11 @@ Please update your todo list and continue working on the solution, addressing th
   def finalize_solution(self, state: WorkflowState) -> WorkflowState:
     """Finalize the solution"""
     if state.is_solved:
-      utils.print_with_timestamp(f"\n🎉 {utils.green(utils.bold('Solution completed successfully'))} after {state.current_iteration} iterations!")
+      utils.print_with_timestamp(
+          f"\n🎉 {
+              utils.green(
+                  utils.bold('Solution completed successfully'))} after {
+              state.current_iteration} iterations!")
 
       if self.integrate_into_codebase:
         utils.print_debug(utils.green('Solution integrated into existing codebase'))
@@ -1751,19 +1772,26 @@ Please update your todo list and continue working on the solution, addressing th
           utils.print_with_timestamp(f"📊 {utils.cyan('Result:')} {self.output_data}")
 
       if not self.integrate_into_codebase:
-        utils.print_with_timestamp(f"\n🚀 {utils.yellow('You can run the tests manually with:')} pytest {self.test_path}")
+        utils.print_with_timestamp(
+            f"\n🚀 {
+                utils.yellow('You can run the tests manually with:')} pytest {
+                self.test_path}")
     else:
       # Check if this is a credit/quota error that caused early termination
       if state.should_terminate_early and state.error_message and "Credit/Quota Error" in state.error_message:
         utils.display_credit_quota_error(
-          error_message=state.error_message,
-          use_bedrock=self.config.claude_code.use_bedrock,
-          current_iteration=state.current_iteration,
-          claude_todos=state.claude_todos,
-          claude_log=state.claude_log
+            error_message=state.error_message,
+            use_bedrock=self.config.claude_code.use_bedrock,
+            current_iteration=state.current_iteration,
+            claude_todos=state.claude_todos,
+            claude_log=state.claude_log
         )
       else:
-        utils.print_with_timestamp(f"\n❌ {utils.red('Maximum iterations')} ({self.config.agent.max_iterations}) {utils.red('reached without solving the problem.')}")
+        utils.print_with_timestamp(
+            f"\n❌ {
+                utils.red('Maximum iterations')} ({
+                self.config.agent.max_iterations}) {
+                utils.red('reached without solving the problem.')}")
         utils.print_with_timestamp(f"📝 {utils.yellow('Last error:')} {utils.red(state.error_message)}")
 
       if not self.integrate_into_codebase:
@@ -1810,7 +1838,7 @@ Please update your todo list and continue working on the solution, addressing th
       test_path: str | None = None,
       enable_plan_mode: bool = False,
       **kwargs: Any,
-    ) -> WorkflowState:
+  ) -> WorkflowState:
     """
     Main method to process a problem using two independent graphs.
 
@@ -1846,7 +1874,8 @@ Please update your todo list and continue working on the solution, addressing th
     # Prompt overrides
     self.development_guidelines = kwargs.get('development_guidelines') or prompts.development_guidelines()
     self.instruction_prompt = kwargs.get('instruction_prompt') or prompts.instruction_prompt()
-    self.plan_mode_instruction_prompt = kwargs.get('plan_mode_instruction_prompt') or prompts.plan_mode_instruction_prompt()
+    self.plan_mode_instruction_prompt = kwargs.get(
+        'plan_mode_instruction_prompt') or prompts.plan_mode_instruction_prompt()
     self.test_instructions = kwargs.get('test_instructions') or prompts.test_instructions(self.solution_path)
     self.plan_review_prompt = kwargs.get('plan_review_prompt') or prompts.plan_review_template()
 
@@ -1971,22 +2000,22 @@ class FeedbackSupervisorAgent(BaseSupervisorAgent):
     workflow.add_edge(ExecutionModeNodes.INITIATE_CLAUDE, ExecutionModeNodes.EXECUTE_CLAUDE)
     workflow.add_edge(ExecutionModeNodes.EXECUTE_CLAUDE, ExecutionModeNodes.REVIEW_SESSION)
     workflow.add_conditional_edges(
-      ExecutionModeNodes.REVIEW_SESSION,
-      self.decide_next_action,
-      {
-        'validate': ExecutionModeNodes.TEST_AND_ANALYZE,
-        'guide': ExecutionModeNodes.GENERATE_GUIDANCE,
-        'reduce': ExecutionModeNodes.REDUCE_MESSAGE,
-        'finish': ExecutionModeNodes.FINALIZE
-      }
+        ExecutionModeNodes.REVIEW_SESSION,
+        self.decide_next_action,
+        {
+            'validate': ExecutionModeNodes.TEST_AND_ANALYZE,
+            'guide': ExecutionModeNodes.GENERATE_GUIDANCE,
+            'reduce': ExecutionModeNodes.REDUCE_MESSAGE,
+            'finish': ExecutionModeNodes.FINALIZE
+        }
     )
     workflow.add_conditional_edges(
-      ExecutionModeNodes.TEST_AND_ANALYZE,
-      self.should_iterate,
-      {
-        'continue': ExecutionModeNodes.GENERATE_GUIDANCE,
-        'finish': ExecutionModeNodes.FINALIZE,
-      }
+        ExecutionModeNodes.TEST_AND_ANALYZE,
+        self.should_iterate,
+        {
+            'continue': ExecutionModeNodes.GENERATE_GUIDANCE,
+            'finish': ExecutionModeNodes.FINALIZE,
+        }
     )
     workflow.add_edge(ExecutionModeNodes.GENERATE_GUIDANCE, ExecutionModeNodes.EXECUTE_CLAUDE)
     workflow.add_edge(ExecutionModeNodes.REDUCE_MESSAGE, ExecutionModeNodes.EXECUTE_CLAUDE)
@@ -2109,7 +2138,10 @@ class SingleShotSupervisorAgent(BaseSupervisorAgent):
   def finalize_solution(self, state: WorkflowState) -> WorkflowState:
     """Finalize the single-shot solution without iteration checking"""
     if state.is_solved:
-      utils.print_with_timestamp(f"\n🎉 {utils.green(utils.bold('Solution completed successfully'))} in single execution!")
+      utils.print_with_timestamp(
+          f"\n🎉 {
+              utils.green(
+                  utils.bold('Solution completed successfully'))} in single execution!")
 
       if self.integrate_into_codebase:
         utils.print_debug(utils.green('Solution integrated into existing codebase'))
@@ -2124,22 +2156,26 @@ class SingleShotSupervisorAgent(BaseSupervisorAgent):
           utils.print_with_timestamp(f"📊 {utils.cyan('Result:')} {self.output_data}")
 
       if not self.integrate_into_codebase:
-        utils.print_with_timestamp(f"\n🚀 {utils.yellow('You can run the tests manually with:')} pytest {self.test_path}")
+        utils.print_with_timestamp(
+            f"\n🚀 {
+                utils.yellow('You can run the tests manually with:')} pytest {
+                self.test_path}")
     else:
       # Single-shot failed - report the specific issues without mentioning iterations
       if state.should_terminate_early and state.error_message and "Credit/Quota Error" in state.error_message:
         utils.display_credit_quota_error(
-          error_message=state.error_message,
-          use_bedrock=self.config.claude_code.use_bedrock,
-          current_iteration=state.current_iteration,
-          claude_todos=state.claude_todos,
-          claude_log=state.claude_log
+            error_message=state.error_message,
+            use_bedrock=self.config.claude_code.use_bedrock,
+            current_iteration=state.current_iteration,
+            claude_todos=state.claude_todos,
+            claude_log=state.claude_log
         )
       elif state.error_message:
         utils.print_with_timestamp(f"\n❌ {utils.red('Single-shot execution encountered errors.')}")
         utils.print_with_timestamp(f"📝 {utils.yellow('Error:')} {utils.red(state.error_message)}")
       else:
-        utils.print_with_timestamp(f"\n❌ {utils.red('Single-shot execution completed but solution validation failed.')}")
+        utils.print_with_timestamp(
+            f"\n❌ {utils.red('Single-shot execution completed but solution validation failed.')}")
         utils.print_with_timestamp("📝 The solution may have issues that prevent tests from passing.")
 
       if not self.integrate_into_codebase:

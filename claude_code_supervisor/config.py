@@ -73,6 +73,7 @@ class ClaudeCodeConfig:
     enable_prompt_preview_truncation: Enable truncation of long prompts in refinement (default: False)
     prompt_preview_head_lines: Number of lines to show from start of prompt when truncated (default: 100)
     prompt_preview_tail_lines: Number of lines to show from end of prompt when truncated (default: 100)
+    tool_description_max_length: Maximum length for tool descriptions in logs (default: 200)
   """
   use_bedrock: bool = False
   working_directory: str | None = None
@@ -86,12 +87,13 @@ class ClaudeCodeConfig:
   plan_auto_approval_threshold: float = 0.8
   suppress_cli_warnings: bool = True
   cli_warning_patterns: list[str] = field(default_factory=lambda: [
-    'Pre-flight check is taking longer than expected',
-    'Pre-flight check',  # Broader match if needed
+      'Pre-flight check is taking longer than expected',
+      'Pre-flight check',  # Broader match if needed
   ])
   enable_prompt_preview_truncation: bool = False
   prompt_preview_head_lines: int = 100
   prompt_preview_tail_lines: int = 100
+  tool_description_max_length: int = 200
 
 
 @dataclass
@@ -137,17 +139,17 @@ def openai_config(model_name: str = 'gpt-4o', temperature: float = 0.1) -> Super
     >>> agent = SupervisorAgent(config=config)
   """
   return SupervisorConfig(
-    agent=AgentConfig(
-      model_name=model_name,
-      temperature=temperature,
-      provider='openai'
-    )
+      agent=AgentConfig(
+          model_name=model_name,
+          temperature=temperature,
+          provider='openai'
+      )
   )
 
 
 def bedrock_config(
-  model_name: str = 'anthropic.claude-3-5-sonnet-20241022-v2:0',
-  temperature: float = 0.1,
+    model_name: str = 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+    temperature: float = 0.1,
 ) -> SupervisorConfig:
   """
   Create a configuration for AWS Bedrock models.
@@ -166,12 +168,12 @@ def bedrock_config(
     >>> agent = SupervisorAgent(config=config)
   """
   return SupervisorConfig(
-    agent=AgentConfig(
-      model_name=model_name,
-      temperature=temperature,
-      provider='bedrock',
-    ),
-    claude_code=ClaudeCodeConfig(use_bedrock=True),
+      agent=AgentConfig(
+          model_name=model_name,
+          temperature=temperature,
+          provider='bedrock',
+      ),
+      claude_code=ClaudeCodeConfig(use_bedrock=True),
   )
 
 
@@ -190,13 +192,13 @@ def development_config() -> SupervisorConfig:
     >>> agent = SupervisorAgent(config=config)
   """
   return SupervisorConfig(
-    agent=AgentConfig(
-      model_name='gpt-4o-mini',
-      temperature=0.2,
-      provider='openai',
-      max_iterations=5,
-      test_timeout=60,
-    ),
+      agent=AgentConfig(
+          model_name='gpt-4o-mini',
+          temperature=0.2,
+          provider='openai',
+          max_iterations=5,
+          test_timeout=60,
+      ),
   )
 
 
@@ -215,20 +217,20 @@ def production_config() -> SupervisorConfig:
     >>> agent = SupervisorAgent(config=config)
   """
   return SupervisorConfig(
-    agent=AgentConfig(
-      model_name='gpt-4o',
-      temperature=0.1,
-      provider='openai',
-      max_iterations=5,
-      test_timeout=60,
-    ),
+      agent=AgentConfig(
+          model_name='gpt-4o',
+          temperature=0.1,
+          provider='openai',
+          max_iterations=5,
+          test_timeout=60,
+      ),
   )
 
 
 def plan_mode_config(
-  max_plan_iterations: int = 3,
-  plan_review_enabled: bool = True,
-  plan_auto_approval_threshold: float = 0.8
+    max_plan_iterations: int = 3,
+    plan_review_enabled: bool = True,
+    plan_auto_approval_threshold: float = 0.8
 ) -> SupervisorConfig:
   """
   Create a configuration with plan mode enabled.
@@ -254,17 +256,17 @@ def plan_mode_config(
     >>> agent = SupervisorAgent(config=config)
   """
   return SupervisorConfig(
-    claude_code=ClaudeCodeConfig(
-      max_plan_iterations=max_plan_iterations,
-      plan_review_enabled=plan_review_enabled,
-      plan_auto_approval_threshold=plan_auto_approval_threshold
-    )
+      claude_code=ClaudeCodeConfig(
+          max_plan_iterations=max_plan_iterations,
+          plan_review_enabled=plan_review_enabled,
+          plan_auto_approval_threshold=plan_auto_approval_threshold
+      )
   )
 
 
 def plan_mode_development_config(
-  max_plan_iterations: int = 5,
-  plan_auto_approval_threshold: float = 0.7
+    max_plan_iterations: int = 5,
+    plan_auto_approval_threshold: float = 0.7
 ) -> SupervisorConfig:
   """
   Create a plan mode configuration optimized for development.
@@ -284,16 +286,16 @@ def plan_mode_development_config(
     >>> agent = SupervisorAgent(config=config)
   """
   return SupervisorConfig(
-    agent=AgentConfig(
-      model_name='gpt-4o-mini',
-      temperature=0.2,
-      provider='openai',
-      max_iterations=5,
-      test_timeout=60,
-    ),
-    claude_code=ClaudeCodeConfig(
-      max_plan_iterations=max_plan_iterations,
-      plan_review_enabled=True,
-      plan_auto_approval_threshold=plan_auto_approval_threshold
-    )
+      agent=AgentConfig(
+          model_name='gpt-4o-mini',
+          temperature=0.2,
+          provider='openai',
+          max_iterations=5,
+          test_timeout=60,
+      ),
+      claude_code=ClaudeCodeConfig(
+          max_plan_iterations=max_plan_iterations,
+          plan_review_enabled=True,
+          plan_auto_approval_threshold=plan_auto_approval_threshold
+      )
   )

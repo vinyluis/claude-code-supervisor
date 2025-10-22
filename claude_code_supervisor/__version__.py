@@ -1,6 +1,6 @@
 """Version information for claude-code-supervisor package."""
 
-__version__ = '0.4.4'
+__version__ = '0.4.5'
 __author__ = 'Vinícius Trevisan'
 __email__ = 'vinicius@viniciustrevisan.com'
 __description__ = (

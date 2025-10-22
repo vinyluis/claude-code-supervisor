@@ -81,11 +81,11 @@ def print_info(message: str, line_break: bool = True) -> None:
 
 
 def print_prompt(
-  message: str,
-  line_break: bool = True,
-  truncate: bool = False,
-  head_lines: int = 100,
-  tail_lines: int = 100
+    message: str,
+    line_break: bool = True,
+    truncate: bool = False,
+    head_lines: int = 100,
+    tail_lines: int = 100
 ) -> None:
   """
   Print prompt message with timestamp and green color, optionally truncating long messages.
@@ -108,9 +108,9 @@ def print_prompt(
     if len(lines) > min_lines:
       omitted_lines = len(lines) - head_lines - tail_lines
       message = (
-        '\n'.join(lines[:head_lines]) +
-        f"\n\n... ({omitted_lines} lines omitted) ...\n\n" +
-        '\n'.join(lines[-tail_lines:])
+          '\n'.join(lines[:head_lines]) +
+          f"\n\n... ({omitted_lines} lines omitted) ...\n\n" +
+          '\n'.join(lines[-tail_lines:])
       )
 
   print_with_timestamp(f"💬 {message}", "green", line_break)
@@ -201,8 +201,18 @@ def reset() -> str:
   return "\033[0m"
 
 
-def get_tool_info(tool_name: str, tool_input: dict) -> str:
-  """Get detailed information about a tool being used"""
+def get_tool_info(tool_name: str, tool_input: dict, max_length: int = 200) -> str:
+  """Get detailed information about a tool being used
+
+  :param tool_name: Name of the tool being used
+  :type tool_name: str
+  :param tool_input: Input parameters for the tool
+  :type tool_input: dict
+  :param max_length: Maximum length for command preview (default: 200)
+  :type max_length: int
+  :returns: Formatted tool information string
+  :rtype: str
+  """
   try:
     if tool_name == 'Read':
       file_path = tool_input.get('file_path', 'unknown')
@@ -226,7 +236,7 @@ def get_tool_info(tool_name: str, tool_input: dict) -> str:
 
     elif tool_name == 'Bash':
       command = tool_input.get('command', 'unknown')
-      command_preview = command[:50] + '...' if len(command) > 50 else command
+      command_preview = command[:max_length] + '...' if len(command) > max_length else command
       return f"- {cyan('Running:')} {command_preview}"
 
     elif tool_name == 'Glob':
@@ -256,7 +266,8 @@ def get_tool_info(tool_name: str, tool_input: dict) -> str:
       return f"- {cyan('Delegating:')} {description}"
 
     elif tool_name == 'mcp__ide__executeCode':
-      code_preview = tool_input.get('code', '')[:30] + '...' if len(tool_input.get('code', '')) > 30 else tool_input.get('code', '')
+      code_preview = tool_input.get(
+          'code', '')[:30] + '...' if len(tool_input.get('code', '')) > 30 else tool_input.get('code', '')
       return f"- {cyan('Executing code:')} {code_preview}"
 
     elif tool_name == 'mcp__ide__getDiagnostics':
@@ -306,21 +317,21 @@ def display_credit_quota_error(error_message: str, use_bedrock: bool = False,
 
   # Credit/balance related errors
   credit_keywords = ['credit balance is too low', 'insufficient credits', 'balance insufficient',
-                    'credits depleted', 'insufficient balance', 'credit limit']
+                     'credits depleted', 'insufficient balance', 'credit limit']
 
   # Quota/rate limit related errors
   quota_keywords = ['quota exceeded', 'rate limit', 'api limit', 'usage limit', 'account limit',
-                   'exceeded your quota', 'exceeded quota', 'rate limited', 'throttled',
-                   'usage exceeded', 'monthly quota', 'daily quota', 'hourly quota',
-                   'request limit', 'token limit exceeded']
+                    'exceeded your quota', 'exceeded quota', 'rate limited', 'throttled',
+                    'usage exceeded', 'monthly quota', 'daily quota', 'hourly quota',
+                    'request limit', 'token limit exceeded']
 
   # Billing/payment related errors
   billing_keywords = ['billing', 'payment required', 'billing issue', 'payment issue',
-                     'payment method', 'billing error', 'payment failed', 'upgrade your plan']
+                      'payment method', 'billing error', 'payment failed', 'upgrade your plan']
 
   # Account status related errors
   account_keywords = ['account suspended', 'account restricted', 'your account has been limited',
-                     'account inactive', 'subscription expired']
+                      'account inactive', 'subscription expired']
 
   if any(keyword in error_lower for keyword in credit_keywords):
     print_with_timestamp(f"\n💰 {yellow('CREDIT BALANCE ISSUE:')}")
@@ -413,27 +424,27 @@ def detect_errors_in_output(output_log: list) -> tuple[list, list, list]:
 
   # Define error detection keywords - be more specific to avoid false positives
   general_error_keywords = [
-    'error occurred', 'failed to', 'exception raised', 'traceback',
-    'cannot', "can't", 'unable to', 'permission denied', 'file not found',
-    'syntax error', 'import error', 'module not found', 'command not found'
+      'error occurred', 'failed to', 'exception raised', 'traceback',
+      'cannot', "can't", 'unable to', 'permission denied', 'file not found',
+      'syntax error', 'import error', 'module not found', 'command not found'
   ]
 
   # Context length errors that should trigger message reduction
   context_length_keywords = [
-    'input is too long', 'context length exceeded', 'maximum context length',
-    'token limit exceeded', 'input too long for requested model',
-    'context window exceeded', 'maximum sequence length'
+      'input is too long', 'context length exceeded', 'maximum context length',
+      'token limit exceeded', 'input too long for requested model',
+      'context window exceeded', 'maximum sequence length'
   ]
   credit_quota_keywords = [
-    'credit balance is too low', 'insufficient credits', 'quota exceeded',
-    'rate limit', 'api limit', 'billing', 'payment required',
-    'usage limit', 'account limit', 'balance insufficient', 'credits depleted',
-    'exceeded your quota', 'exceeded quota', 'rate limited', 'throttled',
-    'billing issue', 'payment issue', 'account suspended', 'account restricted',
-    'insufficient balance', 'credit limit', 'usage exceeded', 'monthly quota',
-    'daily quota', 'hourly quota', 'request limit', 'token limit exceeded',
-    'your account has been limited', 'account inactive', 'subscription expired',
-    'upgrade your plan', 'payment method', 'billing error', 'payment failed'
+      'credit balance is too low', 'insufficient credits', 'quota exceeded',
+      'rate limit', 'api limit', 'billing', 'payment required',
+      'usage limit', 'account limit', 'balance insufficient', 'credits depleted',
+      'exceeded your quota', 'exceeded quota', 'rate limited', 'throttled',
+      'billing issue', 'payment issue', 'account suspended', 'account restricted',
+      'insufficient balance', 'credit limit', 'usage exceeded', 'monthly quota',
+      'daily quota', 'hourly quota', 'request limit', 'token limit exceeded',
+      'your account has been limited', 'account inactive', 'subscription expired',
+      'upgrade your plan', 'payment method', 'billing error', 'payment failed'
   ]
 
   # Check last 3 responses for error patterns
@@ -458,7 +469,8 @@ def detect_errors_in_output(output_log: list) -> tuple[list, list, list]:
   return error_indicators, credit_quota_errors, context_length_errors
 
 
-def format_error_message(general_errors: list, credit_quota_errors: list, context_length_errors: list = None) -> tuple[str, bool, bool]:
+def format_error_message(general_errors: list, credit_quota_errors: list,
+                         context_length_errors: list = None) -> tuple[str, bool, bool]:
   """
   Format error messages and determine if early termination or message reduction is needed.
 
@@ -623,10 +635,12 @@ def print_plan_summary(plan_text: str):
   """Print plan summary with formatting"""
   print_with_timestamp(f"{cyan('Plan Summary:')} {plan_text}")
 
+
 def print_plan_approved(plan_text: str):
   """Print approved plan with formatting"""
   print(f"\n{green('🎉 APPROVED EXECUTION PLAN:')}\n")
   print(f"{cyan(plan_text)}\n")
+
 
 def print_plan_review(score: float, status: str):
   """Print plan review status"""
@@ -657,13 +671,13 @@ def format_plan_feedback(feedback: str, max_length: int = 200) -> str:
 def is_quota_error(text: str) -> bool:
   """Check if text contains quota/credit error indicators"""
   error_patterns = [
-    'credit balance is too low',
-    'quota exceeded',
-    'rate limit',
-    'insufficient credits',
-    'api credit',
-    'usage limit',
-    'billing'
+      'credit balance is too low',
+      'quota exceeded',
+      'rate limit',
+      'insufficient credits',
+      'api credit',
+      'usage limit',
+      'billing'
   ]
   text_lower = text.lower()
   return any(pattern in text_lower for pattern in error_patterns)
@@ -672,17 +686,17 @@ def is_quota_error(text: str) -> bool:
 def node_encountered_quota_error(state: 'WorkflowState') -> bool:
   """Multi-method error detection for robustness"""
   return bool(
-    state.should_terminate_early  # Async process set this flag
-    or any(is_quota_error(log) for log in state.claude_log[-3:])  # Recent logs
-    or (state.error_message and 'quota exceeded' in state.error_message.lower())  # Error message
+      state.should_terminate_early  # Async process set this flag
+      or any(is_quota_error(log) for log in state.claude_log[-3:])  # Recent logs
+      or (state.error_message and 'quota exceeded' in state.error_message.lower())  # Error message
   )
 
 
 def format_conversation_with_roles(
-  user_messages: list[str],
-  assistant_messages: list[str] | None = None,
-  user_labels: list[str] | None = None,
-  assistant_labels: list[str] | None = None
+    user_messages: list[str],
+    assistant_messages: list[str] | None = None,
+    user_labels: list[str] | None = None,
+    assistant_labels: list[str] | None = None
 ) -> str:
   """
   Format a conversation with role markers for multi-turn context.
@@ -724,23 +738,23 @@ def format_conversation_with_roles(
     return ""
 
   formatted_parts = []
-  separator = "\n" + "="*60 + "\n"
+  separator = "\n" + "=" * 60 + "\n"
 
   # Prepare labels
   if user_labels is None:
-    user_labels = [f"Message {i+1}" for i in range(len(user_messages))]
+    user_labels = [f"Message {i + 1}" for i in range(len(user_messages))]
   if assistant_messages and assistant_labels is None:
-    assistant_labels = [f"Response {i+1}" for i in range(len(assistant_messages))]
+    assistant_labels = [f"Response {i + 1}" for i in range(len(assistant_messages))]
 
   # Interleave messages
   for i, user_msg in enumerate(user_messages):
     # Add user message
-    user_label = user_labels[i] if i < len(user_labels) else f"Message {i+1}"
+    user_label = user_labels[i] if i < len(user_labels) else f"Message {i + 1}"
     formatted_parts.append(f"[USER - {user_label}]\n{user_msg}")
 
     # Add corresponding assistant message if available
     if assistant_messages and i < len(assistant_messages):
-      asst_label = assistant_labels[i] if assistant_labels and i < len(assistant_labels) else f"Response {i+1}"
+      asst_label = assistant_labels[i] if assistant_labels and i < len(assistant_labels) else f"Response {i + 1}"
       formatted_parts.append(f"[ASSISTANT - {asst_label}]\n{assistant_messages[i]}")
 
   return separator.join(formatted_parts)
