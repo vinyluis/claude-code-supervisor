@@ -73,6 +73,9 @@ class ClaudeCodeConfig:
     enable_prompt_preview_truncation: Enable truncation of long prompts in refinement (default: False)
     prompt_preview_head_lines: Number of lines to show from start of prompt when truncated (default: 100)
     prompt_preview_tail_lines: Number of lines to show from end of prompt when truncated (default: 100)
+    coding_agent_tools: Custom tools for Claude Code agent via MCP servers (default: [])
+    supervisor_agent_tools: Custom tools for supervisor LLM via bind_tools() (default: [])
+    shared_tools: Custom tools for both agents (default: [])
   """
   use_bedrock: bool = False
   working_directory: str | None = None
@@ -92,6 +95,9 @@ class ClaudeCodeConfig:
   enable_prompt_preview_truncation: bool = False
   prompt_preview_head_lines: int = 100
   prompt_preview_tail_lines: int = 100
+  coding_agent_tools: list = field(default_factory=list)
+  supervisor_agent_tools: list = field(default_factory=list)
+  shared_tools: list = field(default_factory=list)
 
 
 @dataclass

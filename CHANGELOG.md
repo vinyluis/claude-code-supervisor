@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-12-03
+
+### Added
+- **Custom Tools Support**: Users can now provide custom tools to extend capabilities
+  - `coding_agent_tools`: SDK tools (using `@tool` from claude_agent_sdk) for Claude Code agent
+  - `supervisor_agent_tools`: LangChain tools (using `@tool` from langchain_core.tools) for supervisor LLM
+  - `shared_tools`: SDK tools for Claude Code agent (supervisor support planned for future release)
+  - Automatic MCP server creation from SDK tools for Claude Code
+  - Tool binding to supervisor LLM via LangChain's `.bind_tools()` method
+  - Full support for claude-agent-sdk tool integration patterns
+- Comprehensive SDK upgrade plan documentation (SDK_UPGRADE_PLAN.md)
+- Enhanced configuration options in `ClaudeCodeConfig` for custom tools
+
+### Changed
+- Updated to claude-agent-sdk 0.1.11 compatibility (bundled CLI 2.0.57)
+- Improved `initialize_claude_code()` method to handle custom tools registration
+- Enhanced `__init__` to bind tools to supervisor LLM after initialization
+- Enhanced error handling for tool registration with graceful fallbacks
+- Better debugging output for custom tool registration
+- Moved `create_sdk_mcp_server` import to global scope for cleaner code
+
+### Technical
+- All code uses `ClaudeAgentOptions` (confirmed compatibility with SDK 0.1.11)
+- Clean separation: supervisor provides infrastructure, users provide tool implementations
+- MCP server infrastructure for seamless tool integration
+- Type-safe tool definitions supported via SDK's `@tool` decorator
+- Bundled Claude CLI updated to 2.0.57 (via SDK dependency)
+
+### Breaking Changes
+None - This release maintains backward compatibility with existing code
+
+### Migration Notes
+- Existing code continues to work without changes
+- To use custom tools, add them to config: `ClaudeCodeConfig(coding_agent_tools=[my_tool])`
+- SDK upgrade from 0.1.10 to 0.1.11 is transparent (internal CLI update only)
+- See SDK_UPGRADE_PLAN.md Appendix for usage examples
+
 ## [0.3.0] - 2025-01-14
 
 ### Added

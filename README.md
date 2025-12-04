@@ -12,13 +12,87 @@ An intelligent wrapper around Claude Agent SDK that provides automated problem-s
 - **Session Management**: Maintains context across multiple iterations with intelligent workflow orchestration
 - **Progress Monitoring**: Real-time tracking of Claude's progress via todo list updates and output analysis
 - **Intelligent Feedback Loop**: LLM-powered guidance generation that analyzes Claude's work and provides specific, actionable feedback when issues arise
-- **🆕 Plan Mode**: Intelligent plan generation, review, and iterative refinement before execution (inspired by validation patterns)
-- **🆕 Custom Prompt Overrides**: Separate customizable prompts for execution and plan mode instructions
-- **🆕 Dual Graph Architecture**: Independent plan graph and execution graph for clean separation of concerns
+- **🆕 Custom Tools Support** (v1.1.0): Extend capabilities by providing custom tools to coding agent, supervisor, or both
+- **Plan Mode**: Intelligent plan generation, review, and iterative refinement before execution (inspired by validation patterns)
+- **Custom Prompt Overrides**: Separate customizable prompts for execution and plan mode instructions
+- **Dual Graph Architecture**: Independent plan graph and execution graph for clean separation of concerns
 - **Data I/O Support**: Handles various data formats (lists, dicts, CSV, DataFrames, etc.)
 - **Custom Prompts**: Guide implementation toward specific patterns or requirements
 - **Test Automation**: Automatically generates and runs tests for solutions
 - **Multiple Providers**: Support for Anthropic, AWS Bedrock, and OpenAI
+
+## 🧠 How It Works
+
+Claude Code Supervisor uses a **two-agent architecture** where agents work together to solve coding problems:
+
+### The Two Agents
+
+1. **Coding Agent (Claude Code)**
+   - Autonomous coding assistant that writes, edits, and tests code
+   - Has access to tools: Read, Write, Edit, Bash, Grep, etc.
+   - Can plan its own work using todo lists
+   - Executes the actual implementation
+
+2. **Supervisor Agent (LLM)**
+   - Orchestrates the coding process
+   - Analyzes the coding agent's work
+   - Generates intelligent feedback when issues arise
+   - Decides when solution is complete or needs refinement
+
+### Workflow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    SUPERVISOR AGENT (LLM)                   │
+│  • Receives problem description from user                   │
+│  • Generates instructions for coding agent                  │
+│  • Reviews results and provides feedback                    │
+└─────────────────┬───────────────────────────────────────────┘
+                  │ Instructions
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 CODING AGENT (Claude Code)                  │
+│  • Reads the instructions                                   │
+│  • Plans work with todo lists                               │
+│  • Writes/edits code using tools                            │
+│  • Runs tests to verify solution                            │
+│  • Reports results back                                     │
+└─────────────────┬───────────────────────────────────────────┘
+                  │ Results (code, tests, logs)
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    SUPERVISOR AGENT (LLM)                   │
+│  • Analyzes results and test outcomes                       │
+│  • If successful: Done! ✓                                   │
+│  • If failed: Generate specific feedback → repeat cycle     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Key Benefits of This Architecture
+
+- **Separation of Concerns**: Coding agent focuses on implementation, supervisor focuses on strategy
+- **Intelligent Feedback**: Supervisor provides targeted guidance instead of generic retries
+- **Autonomous Operation**: No human intervention needed during iterations
+- **Cost Effective**: Use expensive models (GPT-4) for supervisor, efficient models for coding
+- **Extensible**: Add custom tools to either agent independently
+
+### Example Flow
+
+```python
+# User provides problem
+agent = FeedbackSupervisorAgent()
+result = agent.process("Create a sorting algorithm with tests")
+
+# Behind the scenes:
+# 1. Supervisor → Coding Agent: "Create a sorting function with comprehensive tests"
+# 2. Coding Agent: Writes sort.py and test_sort.py, runs tests
+# 3. Coding Agent → Supervisor: "Tests failing: IndexError on line 15"
+# 4. Supervisor analyzes: "Array bounds issue detected"
+# 5. Supervisor → Coding Agent: "Fix the index bounds check in line 15"
+# 6. Coding Agent: Fixes the bug, re-runs tests
+# 7. Coding Agent → Supervisor: "All tests passing!"
+# 8. Supervisor: "Solution complete!" ✓
+```
 
 ## 📦 Installation
 
@@ -221,6 +295,99 @@ result = agent.process(
 # 3. Iteratively refines plan based on feedback (if needed)
 # 4. Executes approved plan with full implementation
 ```
+
+### 🆕 With Custom Tools (v1.1.0+)
+
+Extend supervisor capabilities by providing custom tools to either the coding agent (Claude Code) or the supervisor LLM, or both:
+
+```python
+from claude_agent_sdk import tool
+from claude_code_supervisor import FeedbackSupervisorAgent
+from claude_code_supervisor.config import SupervisorConfig, ClaudeCodeConfig
+
+# Define a custom tool using @tool decorator
+@tool(
+    name='validate_code_style',
+    description='Validates code follows project style guidelines',
+    input_schema={'code': str, 'language': str}
+)
+async def validate_code_style(args: dict) -> dict:
+    '''Custom validation logic for your project'''
+    code = args['code']
+    language = args.get('language', 'python')
+
+    # Your validation logic here
+    is_valid = True  # ... validation code ...
+
+    return {
+        'content': [{
+            'type': 'text',
+            'text': f'Code style is {"valid" if is_valid else "invalid"}'
+        }]
+    }
+
+# Scenario 1: Tools for coding agent only (extends Claude Code capabilities)
+config = SupervisorConfig(
+    claude_code=ClaudeCodeConfig(
+        coding_agent_tools=[validate_code_style]
+    )
+)
+agent = FeedbackSupervisorAgent(config=config)
+result = agent.process('Create a Python module with proper style')
+
+# Scenario 2: Tools for both agents (shared capabilities)
+@tool('analyze_complexity', 'Analyze code complexity', {'code': str})
+async def analyze_complexity(args: dict) -> dict:
+    # Complexity analysis logic
+    return {'content': [{'type': 'text', 'text': 'Complexity: O(n)'}]}
+
+config = SupervisorConfig(
+    claude_code=ClaudeCodeConfig(
+        shared_tools=[analyze_complexity]  # Available to both supervisor and coding agent
+    )
+)
+agent = FeedbackSupervisorAgent(config=config)
+
+# Scenario 3: Separate tools for each agent
+from langchain_core.tools import tool as langchain_tool
+
+# Define a LangChain tool for supervisor
+@langchain_tool
+def review_architecture(code: str) -> str:
+    '''Reviews code architecture and provides feedback'''
+    # Supervisor-specific analysis
+    return 'Architecture looks good'
+
+config = SupervisorConfig(
+    claude_code=ClaudeCodeConfig(
+        coding_agent_tools=[validate_code_style],   # SDK tools for Claude Code
+        supervisor_agent_tools=[review_architecture], # LangChain tools for supervisor LLM
+        shared_tools=[analyze_complexity]            # SDK tools for Claude Code (both agents coming soon)
+    )
+)
+```
+
+**Tool Types:**
+- **`coding_agent_tools`**: SDK tools (using `@tool` decorator from `claude_agent_sdk`) for Claude Code agent
+- **`supervisor_agent_tools`**: LangChain tools (using `@tool` from `langchain_core.tools`) for supervisor LLM
+- **`shared_tools`**: SDK tools for Claude Code agent (supervisor support coming in future release)
+
+**Benefits of Custom Tools:**
+- Extend capabilities per project without modifying supervisor code
+- Reusable tools across different projects
+- Type-safe tool definitions with appropriate decorators
+- Clean separation: tools can target specific agents
+- Full access to SDK's MCP features for coding agent
+- LangChain's tool ecosystem for supervisor LLM
+
+**Use Cases:**
+- Project-specific validation (coding style, architecture patterns)
+- Domain-specific analysis (database queries, API contracts)
+- Integration with external services (linters, formatters, CI/CD)
+- Custom test frameworks or validation logic
+- Data processing and transformation utilities
+
+See [SDK_UPGRADE_PLAN.md](SDK_UPGRADE_PLAN.md) Appendix for more detailed examples.
 
 ### Advanced Configuration Examples
 

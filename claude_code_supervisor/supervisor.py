@@ -50,7 +50,7 @@ from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from langchain_aws import ChatBedrockConverse
-from claude_agent_sdk import query, ClaudeAgentOptions
+from claude_agent_sdk import query, ClaudeAgentOptions, create_sdk_mcp_server
 from claude_agent_sdk.types import (
   AssistantMessage, TextBlock, ToolUseBlock, ToolResultBlock, ResultMessage,
   SystemMessage
@@ -310,6 +310,18 @@ class BaseSupervisorAgent(ABC):
     else:
       self.llm = self.initialize_llm()
 
+    # Bind tools to supervisor LLM if provided
+    # Note: supervisor_agent_tools should be LangChain-compatible tools (not SDK @tool functions)
+    if self.config.claude_code.supervisor_agent_tools:
+      try:
+        if hasattr(self.llm, 'bind_tools'):
+          self.llm = self.llm.bind_tools(self.config.claude_code.supervisor_agent_tools)
+          utils.print_debug(f"Bound {len(self.config.claude_code.supervisor_agent_tools)} tool(s) to supervisor LLM")
+        else:
+          utils.print_warning(f"Supervisor LLM does not support tool binding (bind_tools method not found)")
+      except Exception as e:
+        utils.print_warning(f"Failed to bind tools to supervisor LLM: {e}")
+
     self.append_system_prompt = append_system_prompt
     self.enable_plan_mode = False
     self.initialize_claude_code()
@@ -345,13 +357,43 @@ class BaseSupervisorAgent(ABC):
       else:
         utils.print_debug("Configured Claude Code to use Anthropic API")
 
+    # Prepare MCP servers for custom tools
+    mcp_servers = {}
+
+    # Add user-provided tools for coding agent
+    if claude_config.coding_agent_tools:
+      try:
+        coding_tools_server = create_sdk_mcp_server(
+          name='user_coding_tools',
+          version='1.0.0',
+          tools=claude_config.coding_agent_tools
+        )
+        mcp_servers['user_coding'] = coding_tools_server
+        utils.print_debug(f"Registered {len(claude_config.coding_agent_tools)} custom tool(s) for coding agent")
+      except Exception as e:
+        utils.print_warning(f"Failed to register coding agent tools: {e}")
+
+    # Add shared tools (available to both agents) for coding agent
+    if claude_config.shared_tools:
+      try:
+        shared_server = create_sdk_mcp_server(
+          name='shared_tools',
+          version='1.0.0',
+          tools=claude_config.shared_tools
+        )
+        mcp_servers['shared'] = shared_server
+        utils.print_debug(f"Registered {len(claude_config.shared_tools)} shared tool(s) for coding agent")
+      except Exception as e:
+        utils.print_warning(f"Failed to register shared tools for coding agent: {e}")
+
     # Pre-configure Claude Code options for faster reuse in iterations
     self.base_claude_options = ClaudeAgentOptions(
       cwd=os.getcwd(),
       permission_mode='acceptEdits',
       max_turns=claude_config.max_turns,
       system_prompt=self.append_system_prompt,
-      allowed_tools=claude_config.tools
+      allowed_tools=claude_config.tools,
+      mcp_servers=mcp_servers if mcp_servers else None
     )
     utils.print_debug("Pre-configured Claude Code options")
 
