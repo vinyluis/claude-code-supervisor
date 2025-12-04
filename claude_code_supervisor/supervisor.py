@@ -53,7 +53,7 @@ from langchain_aws import ChatBedrockConverse
 from claude_agent_sdk import query, ClaudeAgentOptions, create_sdk_mcp_server
 from claude_agent_sdk.types import (
     AssistantMessage, TextBlock, ToolUseBlock, ToolResultBlock, ResultMessage,
-    SystemMessage
+    SystemMessage, ThinkingBlock
 )
 from dotenv import load_dotenv
 from .config import SupervisorConfig, development_config
@@ -512,15 +512,20 @@ class BaseSupervisorAgent(ABC):
 
               # Distinguish plan mode messages in logs
               if options.permission_mode == 'plan':
-                utils.print_claude(f"📋 Plan: {block.text[:200] + ('...' if len(block.text) > 200 else '')}")
+                utils.print_claude(f"📋 Plan: {block.text}")
               else:
-                utils.print_claude(block.text[:200] + ('...' if len(block.text) > 200 else ''))
+                # Make thinking process more visible
+                utils.print_claude(f"{block.text}")
 
               # Pure async execution - just flag potential issues for node to handle
               if utils.is_quota_error(block.text):
                 state.should_terminate_early = True
                 state.error_message = f"API Credit/Quota Error - Early Termination: {block.text}"
                 return  # Exit cleanly, letting node handle workflow decisions
+
+            elif isinstance(block, ThinkingBlock):
+              state.claude_log.append(block.thinking)
+              utils.print_claude(f"🤔 Thinking: {block.thinking}")
 
             elif isinstance(block, ToolUseBlock):
               max_length = self.config.claude_code.tool_description_max_length
