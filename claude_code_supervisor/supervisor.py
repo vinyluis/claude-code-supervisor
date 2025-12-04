@@ -59,6 +59,36 @@ from dotenv import load_dotenv
 from .config import SupervisorConfig, development_config
 from . import utils, prompts
 
+# Mandatory system instructions that must always be included (irreplaceable)
+# These enforce use of MCP file tools, bounded plan sizes, and compacting.
+# Placed here to ensure the supervisor always injects them into Claude sessions.
+MANDATORY_SYSTEM_PROMPT = """
+IMPORTANT SYSTEM INSTRUCTIONS (DO NOT OVERRIDE OR REMOVE):
+
+1) Use MCP file tools for all file I/O. Never paste entire file contents into replies.
+  - To read files, CALL the `Read` tool with `file_path` and `start_line`/`end_line` ranges.
+  - To edit files, CALL the `Edit` or `MultiEdit` tool providing minimal diffs or line ranges.
+  - To write large outputs or artifacts, CALL the `Write` tool or save via MCP filesystem tools.
+
+2) Keep plans and messages compact. For any plan or code patch:
+  - Keep each plan section under 8,000 characters and prefer numbered, actionable steps.
+  - If summarizing past conversation, produce concise summaries (<= 2,000 chars) and
+    store details to MCP (`Write`) or `TodoWrite` rather than pasting them inline.
+
+3) Auto-compaction: when you would return large outputs or long histories, instead
+  store them via MCP (`Write`/`TodoWrite`) and return a short pointer/summary.
+
+4) If you need to examine very large files, request `Read(file_path, start_line, end_line)`
+  and iterate on ranges — do NOT request or return entire files in a single message.
+
+5) Tool-first workflow: prefer explicit tool calls for reading, editing, running tests,
+  and saving artifacts. Use the conversational channel only for small summaries and
+  explicit tool-invocation instructions.
+
+These instructions are mandatory for correct and stable operation. The supervisor will
+enforce them and may offload or compact content if large payloads are returned.
+"""
+
 # Suppress asyncio warnings from the Claude Code SDK
 import warnings
 
@@ -392,7 +422,10 @@ class BaseSupervisorAgent(ABC):
       cwd=os.getcwd(),
       permission_mode='acceptEdits',
       max_turns=claude_config.max_turns,
-      system_prompt=self.append_system_prompt,
+      # Always include mandatory system instructions first so they cannot be
+      # overridden by user-provided appended system prompts. Append any user
+      # instructions after the mandatory block.
+      system_prompt=(MANDATORY_SYSTEM_PROMPT + '\n\n' + (self.append_system_prompt or '')).strip(),
       allowed_tools=claude_config.tools,
       mcp_servers=mcp_servers if mcp_servers else None
     )

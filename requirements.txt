@@ -7,6 +7,6 @@ langchain-aws==0.2.31
 langchain-openai==0.3.26
 langgraph==0.6.6
 
-claude-agent-sdk==0.1.11
+claude-agent-sdk==0.1.9
 pytest>=6.0.0
 python-dotenv>=0.19.0
