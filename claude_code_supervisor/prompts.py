@@ -87,30 +87,42 @@ def build_claude_instructions(
   if approved_plan:
     approved_plan_section = f"""
 
-## ✅ APPROVED EXECUTION PLAN:
+<approved_execution_plan>
+✅ APPROVED EXECUTION PLAN:
 The following execution plan has been reviewed and approved. Please follow this plan closely:
 
 {approved_plan}
+</approved_execution_plan>
 
 """
 
   return f"""\
 {instruction_prompt}
 
-## Requirements / Development Guidelines:
+<requirements>
+Requirements / Development Guidelines:
 {requirements}
+</requirements>
 
-## Problem description:
-{problem_description}{approved_plan_section}
-
-## Input Data:
+<problem_description>
+Problem description:
+{problem_description}
+</problem_description>
+{approved_plan_section}
+<input_data>
+Input Data:
 {input_data if input_data is not None else 'No input data provided.'}
+</input_data>
 
-## Output Data:
+<output_data>
+Output Data:
 {output_data if output_data is not None else 'No output data provided.'}
+</output_data>
 
-## Testing:
+<testing>
+Testing:
 {test_instructions}
+</testing>
 
 Please start by creating a todo list to plan your approach, then implement the solution.
 When you're done, please tell me specifically which function/classes you created, the files you modified, and the tests you added. Also tell me how to run the tests and what the expected output is.
@@ -131,28 +143,36 @@ def error_guidance_template() -> str:
   return """\
 Analyze this Claude Code implementation failure and provide specific guidance for the next iteration.
 
-Problem: {problem_description}
+<problem>
+{problem_description}
+</problem>
 {example_output_section}
 
-Current Issues:
+<current_issues>
 - Error: {error_message}
 - Test Results: {test_results}
 - Current Iteration: {current_iteration}
+</current_issues>
 
-Testing Instructions:
+<testing_instructions>
 {test_instructions}
+</testing_instructions>
 
-Claude's Todo Progress:
+<claude_todo_progress>
 {todo_progress}
+</claude_todo_progress>
 
-Claude's Recent Output:
+<claude_recent_output>
 {recent_output}
+</claude_recent_output>
 
+<guidance_questions>
 Provide specific, actionable guidance for Claude Code to fix these issues:
 1. What went wrong?
 2. What specific steps should Claude take next?
 3. What should Claude focus on or avoid?
 4. How should Claude run and interpret the tests based on the testing instructions?
+</guidance_questions>
 
 Keep your response concise and actionable (2-3 bullet points).
 """
@@ -163,26 +183,34 @@ def feedback_guidance_template() -> str:
   return """\
 Analyze Claude Code's implementation and provide guidance for improvement.
 
-Problem: {problem_description}
+<problem>
+{problem_description}
+</problem>
 {example_output_section}
 
-Validation Feedback:
+<validation_feedback>
 {validation_feedback}
+</validation_feedback>
 
-Testing Instructions:
+<testing_instructions>
 {test_instructions}
+</testing_instructions>
 
-Claude's Recent Messages:
+<claude_recent_messages>
 {recent_messages}
+</claude_recent_messages>
 
-Claude's Todo Progress:
+<claude_todo_progress>
 {todo_progress}
+</claude_todo_progress>
 
+<guidance_questions>
 Based on the validation feedback and Claude's current work, provide specific guidance to help Claude improve their solution:
 1. What aspects of the solution need improvement?
 2. What specific changes should Claude make?
 3. How can the implementation be enhanced?
 4. How should Claude run and interpret the tests based on the testing instructions?
+</guidance_questions>
 
 Focus on actionable improvements that will address the validation feedback.
 Keep your response concise and specific (2-3 bullet points).
@@ -194,27 +222,36 @@ def test_analysis_template() -> str:
   return """\
 Analyze Claude Code's output to determine the best testing strategy.
 
-Claude's Recent Output:
+<claude_recent_output>
 {claude_output}
+</claude_recent_output>
 
+<mentioned_items>
 Claude mentioned these files/functions/classes:
 {mentioned_items}
+</mentioned_items>
 
-Testing Instructions:
+<testing_instructions>
 {test_instructions}
+</testing_instructions>
 
-Available test files in project:
+<available_test_files>
 {available_test_files}
+</available_test_files>
 
+<testing_strategy_questions>
 Determine the best approach for testing:
 1. Should we run specific test files that Claude mentioned?
 2. Should we run integration tests on the entire project?
 3. What specific test commands should be executed based on the testing instructions?
+</testing_strategy_questions>
 
+<required_output>
 Provide a clear testing strategy:
 - Test type: (specific/integration)
 - Test files/patterns to run: (list specific files or patterns)
 - Expected test command: (exact command to execute, following the testing instructions)
+</required_output>
 
 Be specific and actionable. Focus on what Claude actually implemented and follow the testing instructions provided.
 """
@@ -404,18 +441,29 @@ Generate a refined plan that addresses these concerns while maintaining the stre
 def plan_display_template() -> str:
   """Template for displaying plan review results to users."""
   return """\
-📋 **Plan Review Results** (Iteration {plan_iteration})
+<plan_review_results>
+📋 Plan Review Results (Iteration {plan_iteration})
 
-**Overall Score:** {plan_review_score:.2f}/1.0
-**Status:** {approval_status}
+<overall_score>
+Overall Score: {plan_review_score:.2f}/1.0
+</overall_score>
 
-**Plan Summary:**
+<status>
+Status: {approval_status}
+</status>
+
+<plan_summary>
+Plan Summary:
 {claude_plan}
+</plan_summary>
 
-**Review Analysis:**
-✅ **Strengths:** {strengths}
-⚠️  **Areas for Improvement:** {improvements}
-🔍 **Next Steps:** {next_action}
+<review_analysis>
+Review Analysis:
+✅ Strengths: {strengths}
+⚠️  Areas for Improvement: {improvements}
+🔍 Next Steps: {next_action}
+</review_analysis>
 
 {detailed_feedback}
+</plan_review_results>
 """
